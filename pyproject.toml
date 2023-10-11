@@ -12,7 +12,10 @@ httpx = "^0.25.0"
 pandas = "^2.1.1"
 textual-dev = "^1.2.1"
 
-
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+cinder = "cinder.upload:main"
+

@@ -14,7 +14,7 @@ from cinder.condition_assignment import ConditionAssignment
 
 
 class Cinder(App):
-    CSS_PATH = "main.tcss"
+    CSS_PATH = "upload.tcss"
     BINDINGS = [
         Binding(key="ctrl+q", action="quit", description="Exit the application"),
         Binding(key="ctrl+s", action="submit_data", description="Submit data to server"),
@@ -184,6 +184,9 @@ class Cinder(App):
                 self.notify("Data submission failed.", severity="error")
                 logging.exception(e)
 
+def main():
+    app = Cinder()
+    app.run()
 
 if __name__ == "__main__":
     logging.basicConfig(filename="cinder.log", level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s")

@@ -8,7 +8,7 @@ from textual.widgets import Input, Static, Label, OptionList
 
 
 class ConditionAssignment(VerticalScroll):
-    CSS_PATH = "cinder/condition_assignment.tcss"
+    CSS_PATH = "condition_assignment.tcss"
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
