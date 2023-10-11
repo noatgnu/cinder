@@ -72,3 +72,29 @@ Vertical {
 #input-column-index {
     margin-top: 1;
 }
+
+Footer {
+    dock: bottom;
+    height: 1;
+    background: black;
+}
+
+.loading-indicator-inactive {
+    color: black;
+    display: none;
+    height: 1;
+}
+
+.loading-indicator-active {
+    color: black;
+    display: block;
+    height: 1;
+}
+.main-uploading-view-inactive {
+    display: none;
+}
+
+.main-uploading-view-active {
+    display: block;
+    margin: 1 1 1 1;
+}
