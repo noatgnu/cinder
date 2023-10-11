@@ -1,0 +1,74 @@
+Header {
+    dock: top;
+    height: 1;
+}
+
+#file-input-section {
+    height: 3;
+}
+
+#column-by-index {
+    height: 5;
+}
+
+#selection-list {
+    margin-top: 1;
+    border-title-color: white;
+}
+
+#column-selection {
+    margin-top: 2;
+}
+
+#select-index-column-container {
+    margin-top: 2;
+    width: 30%;
+}
+
+#condition-assignment {
+    margin-top: 2;
+    border-title-color: white;
+}
+
+DataTable {
+    background: #EF9595;
+}
+
+Vertical {
+    align: center top;
+}
+
+
+#selection-list-label {
+    align: center top;
+    background: black;
+    height:1;
+}
+
+#select-index-column-container {
+    align: left top;
+    height: 3;
+}
+
+#index-column-selection-label {
+    align: center top;
+    height: 1;
+    background: black;
+}
+#sample-list-container {
+    width: 30%;
+}
+
+#sample-label-container {
+    background: black;
+    height: 1;
+}
+
+#sample-list-section {
+    align: left top;
+    margin-top: 1;
+}
+
+#input-column-index {
+    margin-top: 1;
+}
