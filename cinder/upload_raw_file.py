@@ -1,17 +1,19 @@
 import json
 import tempfile
+from typing import Type
 
 import httpx
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.screen import Screen, ModalScreen
+from textual.screen import Screen, ModalScreen, ScreenResultType
 from textual.widgets import Footer, Header, Input, Markdown, Button, Static, SelectionList, Label, OptionList, Select, \
     LoadingIndicator
-from textual.containers import Vertical, Horizontal, VerticalScroll, Container
+from textual.containers import Vertical, Horizontal, VerticalScroll, Container, Grid
 import logging
 import pandas as pd
 
+from cinder.cindergpt.gpt import gpt_get_index
 from cinder.condition_assignment import ConditionAssignment
 import os
 
@@ -21,10 +23,38 @@ port = os.environ.get("CLAVICLE_PORT", "8000")
 protocol = os.environ.get("CLAVICLE_PROTOCOL", "http")
 
 
+class FolderWalk(ModalScreen[str]):
+    def compose(self) -> ComposeResult:
+        yield Grid(
+            Input(placeholder="Folder path", id="folder-path-input"),
+            Button("Cancel", id="cancel-modal-button", variant="error"),
+            Button("Load", id="load-modal-button", variant="primary"),
+            id="folder-input-section"
+        )
+
+    @on(Button.Pressed, "#cancel-modal-button")
+    async def cancel(self, event: Button.Pressed):
+        self.dismiss("")
+
+    @on(Button.Pressed, "#load-modal-button")
+    async def load(self, event: Button.Pressed):
+        self.dismiss(self.query_one("#folder-path-input", Input).value)
+
+
+class FolderWalkOneByOne(ModalScreen):
+    def compose(self) -> ComposeResult:
+        yield Grid(
+            Label(id="folder-path-input"),
+            Button("Cancel", id="cancel-modal-button", variant="error"),
+            Button("Load", id="load-modal-button", variant="primary"),
+            id="folder-input-section"
+        )
+
 class UploadScreen(Screen):
     BINDINGS = [
         Binding(key="ctrl+q", action="quit", description="Exit the application"),
         Binding(key="ctrl+s", action="submit_data", description="Submit data to server"),
+        Binding(key="ctrl+l", action="directory_walk", description="Walk directory for input files"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -49,6 +79,8 @@ class UploadScreen(Screen):
                             id="selection-list",
                         ),
                         id="selection-list-container"
+                    ),
+                    Container(Button("Auto select with ChatGPT", id="auto-select-button", variant="primary"), id="auto-select-button-container"
                     ),
                     Container(Label("Select index column"), id="index-column-selection-label"),
                     Vertical(
@@ -204,3 +236,41 @@ class UploadScreen(Screen):
                 logging.exception(e)
         self.loading_indicator.remove_class("loading-indicator-active")
         self.loading_indicator.add_class("loading-indicator-inactive")
+
+    @on(Button.Pressed, "#auto-select-button")
+    async def auto_select(self, event: Button.Pressed):
+        try:
+            result = await gpt_get_index(self.df.head(5))
+            print(result)
+            if result is not None:
+                selection = self.query_one("#selection-list", SelectionList)
+                for i in result:
+                    if i in self.columns:
+                        selection.select(i)
+        except ValueError as e:
+            self.notify("Auto select failed.", severity="error")
+            logging.exception(e)
+
+    async def action_directory_walk(self):
+        def call_back_get_path(file_path: str) -> None:
+            if file_path != "":
+                self.turn_on_loading_indicator()
+                self.directory_walk_path = file_path
+                file_lists = []
+                for root, dirs, files in os.walk(self.directory_walk_path):
+                    for file in files:
+                        if file.endswith(".csv") or file.endswith(".tsv") or file.endswith(".txt"):
+                            file_lists.append(os.path.join(root, file))
+                self.notify(f"Found eligible {len(file_lists)} files.", severity="information")
+                if file_lists:
+                    self.directory_walk_file_lists = file_lists
+                self.turn_off_loading_indicator()
+        await self.app.push_screen("directory_walk_upload", call_back_get_path)
+
+    def turn_off_loading_indicator(self):
+        self.query_one("#loading-indicator", LoadingIndicator).remove_class("loading-indicator-active")
+        self.query_one("#loading-indicator", LoadingIndicator).add_class("loading-indicator-inactive")
+
+    def turn_on_loading_indicator(self):
+        self.query_one("#loading-indicator", LoadingIndicator).remove_class("loading-indicator-inactive")
+        self.query_one("#loading-indicator", LoadingIndicator).add_class("loading-indicator-active")

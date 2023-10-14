@@ -11,6 +11,7 @@ textual = "^0.38.1"
 httpx = "^0.25.0"
 pandas = "^2.1.1"
 textual-dev = "^1.2.1"
+openai = "^0.28.1"
 
 [build-system]
 requires = ["poetry-core"]
