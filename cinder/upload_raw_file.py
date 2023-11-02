@@ -13,7 +13,7 @@ from textual.containers import Vertical, Horizontal, VerticalScroll, Container, 
 import logging
 import pandas as pd
 
-from cinder.cindergpt.gpt import gpt_get_index
+from cinder.cindergpt.gpt import gpt_get_index, gpt_index_with_json
 from cinder.condition_assignment import ConditionAssignment
 import os
 
@@ -55,6 +55,7 @@ class UploadScreen(Screen):
         Binding(key="ctrl+q", action="quit", description="Exit the application"),
         Binding(key="ctrl+s", action="submit_data", description="Submit data to server"),
         Binding(key="ctrl+l", action="directory_walk", description="Walk directory for input files"),
+        Binding(key="ctrl+t", action="go_to_title", description="Go to title screen")
     ]
 
     def compose(self) -> ComposeResult:
@@ -240,7 +241,7 @@ class UploadScreen(Screen):
     @on(Button.Pressed, "#auto-select-button")
     async def auto_select(self, event: Button.Pressed):
         try:
-            result = await gpt_get_index(self.df.head(5))
+            result = await gpt_index_with_json(self.df.head(5))
             print(result)
             if result is not None:
                 selection = self.query_one("#selection-list", SelectionList)
@@ -274,3 +275,6 @@ class UploadScreen(Screen):
     def turn_on_loading_indicator(self):
         self.query_one("#loading-indicator", LoadingIndicator).remove_class("loading-indicator-inactive")
         self.query_one("#loading-indicator", LoadingIndicator).add_class("loading-indicator-active")
+
+    def action_go_to_title(self):
+        self.app.push_screen("main_screen")

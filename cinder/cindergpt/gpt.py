@@ -4,7 +4,9 @@ from typing import List
 
 import openai
 import pandas as pd
-from cinder.utility import scramble_dataframe, mask_column_name_with_number
+from cinder.utility import scramble_dataframe, mask_column_name_with_number, round_all_number_in_dataframe
+
+
 # data = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[
 #         {
 #             "role": "system", "content": "Assume a data analyst role"
@@ -29,6 +31,7 @@ from cinder.utility import scramble_dataframe, mask_column_name_with_number
 
 
 async def gpt_get_index(data: pd.DataFrame, api_key: str = "") -> List[int]:
+    data = round_all_number_in_dataframe(data)
     if not api_key:
         openai.api_key = os.environ.get("OPENAI_API_KEY", None)
     if openai.api_key is None:
@@ -55,24 +58,28 @@ async def gpt_index_with_json(data: pd.DataFrame, api_key: str = "") -> List[int
         openai.api_key = os.environ.get("OPENAI_API_KEY", None)
     if openai.api_key is None:
         raise ValueError("OPENAI_API_KEY not found")
-    res = await openai.ChatCompletion.acreate(model="gpt-3.5-turbo", messages=[
-        {
-            "role": "system", "content": "Assume a bioinformatician role",
-        },
-        {
-            "role": "user", "content": f"""The dataframe in dictionary format below has {data.shape[0]} rows and {len(data.columns)} columns. Can you identify the name of columns with only sample intensity data?
-                                       Do not include any explanations and return only in a RFC8259 compliant json array without deviation following the example: ["column_name_1","column_name_2","column_name_3"]"""
-        },
-        {
-            "role": "user", "content": mask_column_name_with_number(scramble_dataframe(data)).to_dict()
-        }
-    ])
+    meta = f"""The dataframe in json format below contains sample intensity data where each key is a column name. Can you identify the name of columns with only sample intensity data? Do not include any explanations and return only in a RFC8259 compliant json array without deviation following the example: ["column_name_1","column_name_2","column_name_3"]"""
     result = []
-    for i in json.loads(res["choices"][0]["message"]["content"]):
-        result.append(data.columns[int(i)])
+    # separate dataframe into smaller chunks to fit into openai api token limit
+    for i in range(0, len(data), 30):
+        res = await openai.ChatCompletion.acreate(model="gpt-3.5-turbo", messages=[
+            {
+                "role": "system", "content": "Assume a bioinformatician role",
+            },
+            {
+                "role": "user", "content": meta
+            },
+            {
+                "role": "user", "content": json.dumps(scramble_dataframe(data).to_dict())
+            }
+        ])
+
+        for i in json.loads(res["choices"][0]["message"]["content"]):
+            result.append(i)
     return result
 
 def get_index(data: pd.DataFrame, api_key: str = "") -> List[int]:
+    data = round_all_number_in_dataframe(data)
     if not api_key:
         openai.api_key = os.environ.get("OPENAI_API_KEY", None)
     if openai.api_key is None:
@@ -84,9 +91,7 @@ def get_index(data: pd.DataFrame, api_key: str = "") -> List[int]:
             "role": "system", "content": "Assume a bioinformatician role",
         },
         {
-            "role": "user", "content": f"""The tabulated data below has {data.shape[0]+1} rows and {len(data.columns)} columns with the first row being header. Each row is separated by a newline symbol '\\n'. Can you identify the name of columns with only sample intensity data?
-                                       Do not include any explanations and return only in a RFC8259 compliant json array without deviation following the example: ["column_name_1","column_name_2","column_name_3"]"""
-        },
+            "role": "user", "content": meta},
         {
             "role": "user", "content": scramble_dataframe(data).to_csv(index=False, sep="\t")
         }
@@ -94,21 +99,32 @@ def get_index(data: pd.DataFrame, api_key: str = "") -> List[int]:
     return json.loads(res["choices"][0]["message"]["content"])
 
 def get_index_json(data: pd.DataFrame, api_key: str = "") -> List[int]:
+    data = round_all_number_in_dataframe(data)
     if not api_key:
         openai.api_key = os.environ.get("OPENAI_API_KEY", None)
     if openai.api_key is None:
         raise ValueError("OPENAI_API_KEY not found")
-    meta = f"""The dataframe in json format below contains sample intensity data where each key is a column name. Can you identify the name of columns with only sample intensity data? Do not include any explanations and return only in a RFC8259 compliant json array without deviation following the example: ["column_name_1","column_name_2","column_name_3"]"""
-
-    res = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[
-        {
-            "role": "system", "content": "Assume a bioinformatician role",
-        },
-        {
-            "role": "user", "content": meta
-        },
-        {
-            "role": "user", "content": json.dumps(scramble_dataframe(data).to_dict())
-        }
-    ])
-    return json.loads(res["choices"][0]["message"]["content"])
+    meta = f"""The dataframe in json format below contains sample intensity data where each key is a column name. Please identify the column name of those with only sample intensity data. Do not include any explanations and return only in a RFC8259 compliant json array without deviation following the example: [column_number_1, column_number_2, column_number_3]"""
+    result = []
+    for i in range(0, len(data.columns), 25):
+        if i+25 > len(data.columns):
+            columns = data.columns[i:]
+        else:
+            columns = data.columns[i:i+25]
+        res = openai.ChatCompletion.create(model="gpt-3.5-turbo", messages=[
+            {
+                "role": "system", "content": "Assume a bioinformatician role",
+            },
+            {
+                "role": "user", "content": meta
+            },
+            {
+                "role": "user", "content": json.dumps(scramble_dataframe(data[columns]).to_dict())
+            }
+        ])
+        print(res)
+        for c in json.loads(res["choices"][0]["message"]["content"]):
+            if c in data.columns:
+                result.append(c)
+        print(len(result))
+    return result

@@ -12,11 +12,14 @@ httpx = "^0.25.0"
 pandas = "^2.1.1"
 textual-dev = "^1.2.1"
 openai = "^0.28.1"
+python-on-whales = "^0.65.0"
+appdirs = "^1.4.4"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-cinder = "cinder.upload:main"
+cinder = "cinder.main:main"
+cinder-project = "cinder.cinderproject.project:manage_project"
 
