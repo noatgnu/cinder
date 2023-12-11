@@ -4,7 +4,7 @@ import os
 import sqlite3
 import uuid
 from dataclasses import dataclass
-
+import hashlib
 from python_on_whales import docker
 
 
@@ -16,21 +16,21 @@ class Project:
     project_name: str
     project_path: str
     project_data_path: str
-    project_metadata: dict
-    unprocessed: list[str]
-    differential_analysis: list[str]
-    sample_annotation: list[str]
-    other_files: list[str]
-    comparison_matrix: list[str]
+    project_metadata: list[dict]
+    unprocessed: list[dict]
+    differential_analysis: list[dict]
+    sample_annotation: list[dict]
+    other_files: list[dict]
+    comparison_matrix: list[dict]
 
-    def calculate_md5_hash_of_file(self, file: str) -> str:
-        """Calculate md5 hash of a file"""
-        import hashlib
-        md5_hash = hashlib.md5()
+    def calculate_sha1_hash_of_file(self, file: str) -> str:
+        """Calculate sha1 hash of a file"""
+
+        sha1_hash = hashlib.sha1()
         with open(file, "rb") as f:
             for chunk in iter(lambda: f.read(4096), b""):
-                md5_hash.update(chunk)
-        return md5_hash.hexdigest()
+                sha1_hash.update(chunk)
+        return sha1_hash.hexdigest()
 
     def refresh(self):
         """Walk through the project data subfolders and update the file lists for unprocessed, differential analysis, sample annotation, other files, and comparison matrix"""
@@ -39,39 +39,52 @@ class Project:
         self.sample_annotation = []
         self.other_files = []
         self.comparison_matrix = []
+        sha1_list = []
         for root, dirs, files in os.walk(self.project_data_path):
-            if "unprocessed" in root:
-                for file in files:
-                    if not file.endswith(".json"):
-                        self.unprocessed.append(file)
-                        with open(os.path.join(self.project_data_path, "unprocessed", f"{file}.md5"), "w") as f:
-                            f.write(self.calculate_md5_hash_of_file(os.path.join(self.project_data_path, "unprocessed", file)))
-            elif "differential_analysis" in root:
-                for file in files:
-                    if not file.endswith(".json"):
-                        self.differential_analysis.append(file)
-                        with open(os.path.join(self.project_data_path, "differential_analysis", f"{file}.md5"), "w") as f:
-                            f.write(self.calculate_md5_hash_of_file(os.path.join(self.project_data_path, "differential_analysis", file)))
-            elif "sample_annotation" in root:
-                for file in files:
-                    if not file.endswith(".json"):
-                        self.sample_annotation.append(file)
-                        with open(os.path.join(self.project_data_path, "sample_annotation", f"{file}.md5"), "w") as f:
-                            f.write(self.calculate_md5_hash_of_file(os.path.join(self.project_data_path, "sample_annotation", file)))
-            elif "comparison_matrix" in root:
-                for file in files:
-                    if not file.endswith(".json"):
-                        self.comparison_matrix.append(file)
-                        with open(os.path.join(self.project_data_path, "comparison_matrix", f"{file}.md5"), "w") as f:
-                            f.write(self.calculate_md5_hash_of_file(os.path.join(self.project_data_path, "comparison_matrix", file)))
-            elif "other_files" in root:
-                for file in files:
-                    if not file.endswith(".json"):
-                        self.other_files.append(file)
-                        with open(os.path.join(self.project_data_path, "other_files", f"{file}.md5"), "w") as f:
-                            f.write(self.calculate_md5_hash_of_file(os.path.join(self.project_data_path, "other_files", file)))
+            item_data_path = root.replace(self.project_data_path, "").lstrip(os.sep)
+            for cat in ["unprocessed", "differential_analysis", "sample_annotation", "other_files", "comparison_matrix"]:
+
+                if item_data_path.startswith(cat):
+                    for file in files:
+                        if not file.endswith(".sha1"):
+                            if not file.endswith(".json"):
+                                data = {
+                                    "filename": file,
+                                    "path": item_data_path.split(os.sep),
+                                    "sha1": self.calculate_sha1_hash_of_file(
+                                        os.path.join(self.project_data_path, root, file))
+                                }
+                                sha1_list.append(data["sha1"])
+                                if cat == "unprocessed":
+                                    self.unprocessed.append(data)
+                                elif cat == "differential_analysis":
+                                    self.differential_analysis.append(data)
+                                elif cat == "sample_annotation":
+                                    self.sample_annotation.append(data)
+                                elif cat == "other_files":
+                                    self.other_files.append(data)
+                                elif cat == "comparison_matrix":
+                                    self.comparison_matrix.append(data)
+
         with open(os.path.join(self.project_path, "project.json"), "w") as f:
             json.dump(dataclasses.asdict(self), f, indent=2)
+
+        sha1 = self.calculate_sha1_hash_of_file(os.path.join(self.project_path, "project.json"))
+        with open(os.path.join(self.project_path, "project.json.sha1"), "w") as f:
+            f.write(sha1)
+            sha1_list.append(sha1)
+
+        # combined all sha1 and digest into project wide hash
+        s1 = hashlib.sha1()
+        for s in sha1_list:
+            s1.update(s.encode('utf-8'))
+        sha1 = s1.hexdigest()
+        with open(os.path.join(self.project_path, "project.sha1"), "w") as f:
+            f.write(sha1)
+
+
+
+
 
     @staticmethod
     def perform_differential_analysis(self, data_path: str, unprocessed_file: str, annotation_file: str,
@@ -110,21 +123,21 @@ class ProjectDatabase:
         self.path = path
         self.conn = sqlite3.connect(path)
         self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, location TEXT, global_id TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)")
+            "CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, location TEXT, global_id TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, sha1_hash TEXT)")
 
-    def create_project(self, name: str, description: str, location: str) -> dict:
+    def create_project(self, name: str, description: str, location: str, hash: str) -> dict:
         """Create project and return project id"""
         uu = str(uuid.uuid4())
-        self.conn.execute("INSERT INTO projects (name, description, location, global_id) VALUES (?, ?, ?, ?)",
-                          (name, description, location, uu))
+        self.conn.execute("INSERT INTO projects (name, description, location, global_id, sha1_hash) VALUES (?, ?, ?, ?, ?)",
+                          (name, description, location, uu, hash))
         self.conn.commit()
         id = self.conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         return {"id": id, "global_id": uu}
 
 
-    def update_project(self, project_id: int, name: str, description: str):
+    def update_project(self, project_id: int, name: str, description: str, location: str, hash: str):
         """Update project name and description"""
-        self.conn.execute("UPDATE projects SET name=?, description=? WHERE id=?", (name, description, project_id))
+        self.conn.execute("UPDATE projects SET name=?, description=?, location=?, sha1_hash=? WHERE id=?", (name, description, project_id, location, hash))
         self.conn.commit()
 
     def delete_project(self, project_id: int):
@@ -155,6 +168,13 @@ class ProjectDatabase:
         total = self.conn.execute("SELECT COUNT(*) FROM projects WHERE name LIKE ? OR description LIKE ?",
                                   (f"%{term}%", f"%{term}%")).fetchone()[0]
         return QueryResult(total=total, offset=offset, limit=limit, data=projects)
+
+    def recreate_database(self):
+        """Recreate database"""
+        self.conn.execute("DROP TABLE IF EXISTS projects")
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, location TEXT, global_id TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, sha1_hash TEXT)")
+        self.conn.commit()
 
 
 
