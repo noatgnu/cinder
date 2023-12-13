@@ -1,12 +1,27 @@
 import dataclasses
 import json
 import os
+import shutil
 import sqlite3
 import uuid
 from dataclasses import dataclass
 import hashlib
+from io import BytesIO
+
+import httpx
 from python_on_whales import docker
 
+@dataclass
+class ProjectFile:
+    filename: str
+    path: tuple[str, ...]
+    sha1: str
+    remote_id: int = None
+
+    def to_dict(self):
+        d = dataclasses.asdict(self)
+        del d["remote_id"]
+        return d
 
 @dataclass
 class Project:
@@ -17,11 +32,17 @@ class Project:
     project_path: str
     project_data_path: str
     project_metadata: list[dict]
-    unprocessed: list[dict]
-    differential_analysis: list[dict]
-    sample_annotation: list[dict]
-    other_files: list[dict]
-    comparison_matrix: list[dict]
+    unprocessed: list[ProjectFile]
+    differential_analysis: list[ProjectFile]
+    sample_annotation: list[ProjectFile]
+    other_files: list[ProjectFile]
+    comparison_matrix: list[ProjectFile]
+    remote_id: int = None
+
+    def to_dict(self):
+        d = dataclasses.asdict(self)
+        del d["remote_id"]
+        return d
 
     def calculate_sha1_hash_of_file(self, file: str) -> str:
         """Calculate sha1 hash of a file"""
@@ -34,40 +55,42 @@ class Project:
 
     def refresh(self):
         """Walk through the project data subfolders and update the file lists for unprocessed, differential analysis, sample annotation, other files, and comparison matrix"""
-        self.unprocessed = []
-        self.differential_analysis = []
-        self.sample_annotation = []
-        self.other_files = []
-        self.comparison_matrix = []
         sha1_list = []
+        temp = {
+            "unprocessed": [],
+            "differential_analysis": [],
+            "sample_annotation": [],
+            "other_files": [],
+            "comparison_matrix": []
+        }
+
         for root, dirs, files in os.walk(self.project_data_path):
             item_data_path = root.replace(self.project_data_path, "").lstrip(os.sep)
             for cat in ["unprocessed", "differential_analysis", "sample_annotation", "other_files", "comparison_matrix"]:
-
                 if item_data_path.startswith(cat):
                     for file in files:
                         if not file.endswith(".sha1"):
-                            if not file.endswith(".json"):
-                                data = {
-                                    "filename": file,
-                                    "path": item_data_path.split(os.sep),
-                                    "sha1": self.calculate_sha1_hash_of_file(
-                                        os.path.join(self.project_data_path, root, file))
-                                }
-                                sha1_list.append(data["sha1"])
-                                if cat == "unprocessed":
-                                    self.unprocessed.append(data)
-                                elif cat == "differential_analysis":
-                                    self.differential_analysis.append(data)
-                                elif cat == "sample_annotation":
-                                    self.sample_annotation.append(data)
-                                elif cat == "other_files":
-                                    self.other_files.append(data)
-                                elif cat == "comparison_matrix":
-                                    self.comparison_matrix.append(data)
+                            data = ProjectFile(
+                                filename = file,
+                                path = tuple(item_data_path.split(os.sep)),
+                                sha1 = self.calculate_sha1_hash_of_file(
+                                    os.path.join(self.project_data_path, root, file))
+                            )
+                            for j in getattr(self, cat):
+                                if data.sha1 == j.sha1 and data.filename == j.filename and data.path == j.path:
+                                    data.remote_id = j.remote_id
+                            sha1_list.append(data.sha1)
+                            temp[cat].append(data)
+        # check and remove from array if file is not in project folder
+        removed_file = []
+        for cat in ["unprocessed", "differential_analysis", "sample_annotation", "other_files", "comparison_matrix"]:
+            for i in getattr(self, cat):
+                if i not in temp[cat]:
+                    removed_file.append(i)
+            setattr(self, cat, temp[cat])
 
         with open(os.path.join(self.project_path, "project.json"), "w") as f:
-            json.dump(dataclasses.asdict(self), f, indent=2)
+            json.dump(self.to_dict(), f, indent=2)
 
         sha1 = self.calculate_sha1_hash_of_file(os.path.join(self.project_path, "project.json"))
         with open(os.path.join(self.project_path, "project.json.sha1"), "w") as f:
@@ -82,9 +105,7 @@ class Project:
         with open(os.path.join(self.project_path, "project.sha1"), "w") as f:
             f.write(sha1)
 
-
-
-
+        return removed_file
 
     @staticmethod
     def perform_differential_analysis(self, data_path: str, unprocessed_file: str, annotation_file: str,
@@ -111,6 +132,17 @@ class Project:
                                f"{output_differential_analysis_file}.json"), "w") as f:
             json.dump(command, f, indent=2)
 
+    def remove_file(self, file: ProjectFile):
+        """Remove file from project"""
+        os.remove(os.path.join(self.project_data_path, *file.path, file.filename))
+
+    def remove_project(self, db):
+        """Remove project from database and delete project folder"""
+        if self.project_id:
+            db.delete_project(self.project_id)
+        shutil.rmtree(self.project_path)
+
+
 @dataclass
 class QueryResult:
     total: int
@@ -123,7 +155,7 @@ class ProjectDatabase:
         self.path = path
         self.conn = sqlite3.connect(path)
         self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, location TEXT, global_id TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, sha1_hash TEXT)")
+            "CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, location TEXT, global_id TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, sha1_hash TEXT, remote_id INTEGER)")
 
     def create_project(self, name: str, description: str, location: str, hash: str) -> dict:
         """Create project and return project id"""
@@ -176,6 +208,10 @@ class ProjectDatabase:
             "CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, location TEXT, global_id TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, sha1_hash TEXT)")
         self.conn.commit()
 
+    def update_remote_id(self, remote_id: int, project_id: int):
+        """Update remote id"""
+        self.conn.execute("UPDATE projects SET remote_id=? WHERE id=?", (remote_id, project_id))
+        self.conn.commit()
 
 
 def load_project(project_folder: str) -> Project:
@@ -186,4 +222,130 @@ def load_project(project_folder: str) -> Project:
     return project
 
 
+class CorpusServer:
+    def __init__(self, host: str, api_key: str, local_db: ProjectDatabase):
+        self.host = host
+        self.api_key = api_key
+        self.post_project_path = f"{host}/api/projects"
+        self.db = local_db
 
+    async def create_project(self, project: Project):
+        """Create project on server"""
+        payload = {
+            "name": project.project_name,
+            "description": project.description,
+            "hash": open(os.path.join(project.project_path, "project.sha1"), "rt").read(),
+            "metadata": project.to_dict(),
+            "global_id": project.project_global_id
+        }
+        async with httpx.AsyncClient(headers={"X-API-Key": f"{self.api_key}", "content-type": "application/json"}) as client:
+            d = await client.post(self.post_project_path, json=payload)
+            project.remote_id = d.json()["id"]
+            project.refresh()
+            self.db.update_remote_id(project_id=project.project_id, remote_id=project.remote_id)
+            return project
+
+    async def update_project(self, project: Project):
+        """Update project on server"""
+        async with httpx.AsyncClient(headers={"X-API-Key": f"{self.api_key}", "content-type": "application/json"}) as client:
+            d = await client.patch(f"{self.post_project_path}/{project.remote_id}", json={
+                "name": project.project_name,
+             "description": project.description,
+             "hash": open(os.path.join(project.project_path, "project.sha1"), "rt").read(),
+             "metadata": json.dumps(project.to_dict()),
+             "global_id": project.project_global_id}
+                                   )
+
+
+    async def get_project(self, project_id: int):
+        """Get project from server"""
+        async with httpx.AsyncClient(headers={"X-API-Key": f"{self.api_key}"}) as client:
+            d = await client.get(f"{self.post_project_path}/{project_id}")
+            project = Project(**d.json())
+            return project
+
+    async def get_project_files(self, project_id: int):
+        """Get project files from server"""
+        async with httpx.AsyncClient(headers={"X-API-Key": f"{self.api_key}"}) as client:
+            d = await client.get(f"{self.post_project_path}/{project_id}/files")
+            return d
+
+    async def remove_file(self, file: ProjectFile):
+        """Remove file from server"""
+        async with httpx.AsyncClient(headers={"X-API-Key": f"{self.api_key}"}) as client:
+            d = await client.delete(f"{self.host}/api/files/{file.remote_id}")
+            if d.status_code == 204:
+                return True
+            else:
+                return False
+
+    async def remove_remote_file_not_in_local_project(self, project: Project):
+        """Check if file exists in project"""
+        files = await self.get_project_files(project.remote_id)
+        files = files.json()
+        result = {}
+        for f in files:
+            path = tuple()
+            if f["path"]:
+                path = tuple(f["path"])
+            cat = f["file_category"]
+            p_f = ProjectFile(filename=f["filename"], sha1=f["hash"], remote_id=f["id"], path=path)
+            if p_f not in getattr(project, cat):
+                await self.remove_file(p_f)
+            else:
+                if cat not in result:
+                    result[cat] = []
+                result[cat].append(f)
+        return result
+
+    async def upload_file(self, project: Project):
+        """Get remote file lists. Check if file exists on server using ProjectFile.remote_id, if not, upload file, if they are, check if hash matches, if not, upload file"""
+        result = await self.remove_remote_file_not_in_local_project(project)
+        filename_map = {}
+
+        for cat in ["unprocessed", "differential_analysis", "sample_annotation", "other_files", "comparison_matrix"]:
+            for i, file in enumerate(getattr(project, cat)):
+                if not file.remote_id:
+                    file = await self.upload_chunk(file, project, cat)
+                    getattr(project, cat)[i].remote_id = file.remote_id
+                    yield file
+
+    async def upload_chunk(self, file: ProjectFile, project: Project, category: str, offset: int = 0):
+        """Upload file in chunks"""
+        async with httpx.AsyncClient(headers={"X-API-Key": f"{self.api_key}"}) as client:
+            d = await client.post(f"{self.host}/api/files/chunked",
+                                  json={
+                                      "filename": file.filename,
+                                      "size": os.path.getsize(
+                                          os.path.join(project.project_data_path, *file.path, file.filename)),
+                                      "data_hash": file.sha1,
+                                        "file_category": category
+                                  })
+            upload_id = d.json()["upload_id"]
+            with open(os.path.join(project.project_data_path, *file.path, file.filename),
+                      "rb") as f:
+                # read the file in chunk of d.chunk_size and upload it
+                while True:
+                    chunk = f.read(d.json()["chunk_size"])
+                    if not chunk:
+                        break
+                    chunk_file = BytesIO(chunk)
+                    progress = await client.post(f"{self.host}/api/files/chunked/{upload_id}",
+                                                 data={"offset": offset}, files={"chunk": chunk_file})
+                    if progress.json()["status"] == "complete":
+                        break
+                    else:
+                        offset = progress.json()["offset"]
+                if file.remote_id:
+                    if category in ["unprocessed", "differential_analysis"] and (file.filename.endswith(".tsv") or file.filename.endswith(".txt") or file.filename.endswith(".csv")):
+                        file = await client.post(f"{self.host}/api/files/chunked/{upload_id}/complete", json={"load_file_content": True, "file_id": file.remote_id})
+                    else:
+                        file = await client.post(f"{self.host}/api/files/chunked/{upload_id}/complete", json={"file_id": file.remote_id})
+                else:
+                    if category in ["unprocessed", "differential_analysis"] and (file.filename.endswith(".tsv") or file.filename.endswith(".txt")  or file.filename.endswith(".csv")):
+                        result = await client.post(f"{self.host}/api/files/chunked/{upload_id}/complete", json={"create_file": True, "load_file_content": True})
+                    else:
+                        result = await client.post(f"{self.host}/api/files/chunked/{upload_id}/complete", json={"create_file": True})
+                    print(result.content)
+                    file.remote_id = result.json()["id"]
+            return file

@@ -1,0 +1,26 @@
+SettingsScreen {
+    layout: grid;
+    grid-size: 3 2;
+    grid-columns: 1fr 1fr 1fr;
+    grid-rows: 10 1fr;
+}
+
+.description {
+    column-span: 3;
+    height: 300;
+}
+
+.main-container {
+    width: 50;
+}
+
+.small-input {
+    height: 1;
+    border: none;
+    background: darkblue;
+}
+
+.align-top {
+    content-align: left top;
+    height: 200;
+}

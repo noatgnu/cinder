@@ -1,32 +1,27 @@
 import dataclasses
 import json
 import os
+from io import BytesIO
 
 import click
+import httpx
 import pandas as pd
 from appdirs import AppDirs
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Grid, VerticalScroll, Vertical
+from textual.screen import Screen
 from textual.widgets import Label, Header, Input, Placeholder, Button, OptionList, Footer, Markdown, Static, Select, \
     SelectionList
 from textual.widgets.selection_list import Selection
 from textual.widgets.option_list import Option
 
 from cinder.base_screen import BaseScreen
-from cinder.project import Project, QueryResult, ProjectDatabase
+from cinder.project import Project, QueryResult, ProjectDatabase, CorpusServer, ProjectFile
 from cinder.utility import detect_delimiter_from_extension
 
 
-class ModalUpdateTextScreen(BaseScreen):
-    CSS_PATH = "modal_update_text_screen.tcss"
-
-    def compose(self) -> ComposeResult:
-        pass
-
-    def on_mount(self) -> None:
-        pass
 
 
 class ProjectManagerScreen(BaseScreen):
@@ -105,7 +100,8 @@ class ProjectScreen(BaseScreen):
     CSS_PATH = "project_screen.tcss"
     BINDINGS = [
         Binding("ctrl+r", "refresh", "Refresh project data"),
-        Binding("ctrl+s", "save", "Save project data")
+        Binding("ctrl+s", "save", "Save project data"),
+        Binding("ctrl+r", "save_to_server", "Save project data to server"),
     ]
 
     def __init__(self, *args, **kwargs):
@@ -113,9 +109,11 @@ class ProjectScreen(BaseScreen):
         self.unprocessed_df: pd.DataFrame | None = None
         self.annotation_df: pd.DataFrame | None = None
         self.comparison_matrix_df: pd.DataFrame | None = None
-        self.selected_unprocessed_file: str | None = None
-        self.selected_sample_annotation_file: str | None = None
-        self.selected_comparison_matrix_file: str | None = None
+        self.selected_unprocessed_file: ProjectFile | None = None
+        self.selected_sample_annotation_file: ProjectFile | None = None
+        self.selected_comparison_matrix_file: ProjectFile | None = None
+        self.diff_analysis_df: pd.DataFrame | None = None
+        self.selected_diff_analysis_file: ProjectFile | None = None
         self.index_column: str | None = None
         self.meta_data_columns: list[str] = []
 
@@ -126,7 +124,7 @@ class ProjectScreen(BaseScreen):
         yield Grid(
             Vertical(Horizontal(Label("Unprocessed Files"), classes="align-middle h-1"),
                      VerticalScroll(
-                         OptionList(*[Option(i[1]["filename"], id=str(i[0])) for i in enumerate(self.app.data.unprocessed)],
+                         OptionList(*[Option(i[1].filename, id=str(i[0])) for i in enumerate(self.app.data.unprocessed) if not i[1].filename.endswith(".json")],
                                     id="unprocessed-file-selection"),
                          id="unprocessed-file-scroll", classes="file-display-scroll-project ml-4"
                      ),
@@ -136,16 +134,23 @@ class ProjectScreen(BaseScreen):
                      ),
             Vertical(Horizontal(Label("Sample Annotation Files"), classes="align-middle h-1"),
                      VerticalScroll(
-                         OptionList(*[Option(i[1]["filename"], id=str(i[0])) for i in enumerate(self.app.data.sample_annotation)],
+                         OptionList(*[Option(i[1].filename, id=str(i[0])) for i in enumerate(self.app.data.sample_annotation) if not i[1].filename.endswith(".json")],
                                     id="sample-annotation-file-selection"),
                          id="sample-annotation-file-scroll", classes="file-display-scroll-project ml-4"
                      ), Markdown("# Select an annotation file", id="sample-annotation-file-markdown"), ),
             Vertical(Horizontal(Label("Comparison Matrix Files"), classes="align-middle h-1"),
                      VerticalScroll(
-                         OptionList(*[Option(i[1]["filename"], id=str(i[0])) for i in enumerate(self.app.data.comparison_matrix)],
+                         OptionList(*[Option(i[1].filename, id=str(i[0])) for i in enumerate(self.app.data.comparison_matrix) if not i[1].filename.endswith(".json")],
                                     id="comparison-matrix-file-selection"),
                          id="comparison-matrix-file-scroll", classes="file-display-scroll-project ml-4"
                      ), Markdown("# Select a comparison matrix file", id="comparison-matrix-file-markdown"), ),
+            Vertical(Horizontal(Label("Differential Analysis Files"), classes="align-middle h-1"),
+                     VerticalScroll(
+                         OptionList(*[Option(i[1].filename, id=str(i[0])) for i in
+                                      enumerate(self.app.data.differential_analysis) if not i[1].filename.endswith(".json")],
+                                    id="differential-analysis-file-selection"),
+                         id="differential-analysis-file-scroll", classes="file-display-scroll-project ml-4"
+                     ), Markdown("# Select a differential analysis file", id="differential-analysis-file-markdown"), ),
 
             id="project-screen-grid",
         )
@@ -164,7 +169,7 @@ class ProjectScreen(BaseScreen):
         if self.unprocessed_df is not None:
             self.notify(f"Selected {event.value} as index column")
             markdown = self.query_one("#unprocessed-file-markdown", Markdown)
-            markdown_text = f"""# {self.selected_unprocessed_file}
+            markdown_text = f"""# {self.selected_unprocessed_file.filename}
                     - rows: {self.unprocessed_df.shape[0]}
                     - columns: {self.unprocessed_df.shape[1]}
                     - index column: {event.value}
@@ -173,20 +178,19 @@ class ProjectScreen(BaseScreen):
     @on(OptionList.OptionSelected, "#unprocessed-file-selection")
     async def unprocessed_file_selected(self, event: OptionList.OptionSelected):
         self.selected_unprocessed_file = self.app.data.unprocessed[int(event.option.id)]
-        print(self.selected_unprocessed_file)
         self.unprocessed_df = pd.read_csv(
             os.path.join(
                 self.app.data.project_data_path,
-                os.sep.join(self.selected_unprocessed_file["path"]),
-                self.selected_unprocessed_file["filename"]),
-            sep=detect_delimiter_from_extension(self.selected_unprocessed_file["filename"])
+                *self.selected_unprocessed_file.path,
+                self.selected_unprocessed_file.filename),
+            sep=detect_delimiter_from_extension(self.selected_unprocessed_file.filename)
         )
         index_selection = self.query_one("#index-column-selection", Select)
         index_selection.set_options([(i, i) for i in self.unprocessed_df.columns])
         additional_meta_index_columns = self.query_one("#additional-meta-index-columns", SelectionList)
         additional_meta_index_columns.clear_options()
         additional_meta_index_columns.add_options([Selection(i, i) for i in self.unprocessed_df.columns])
-        json_path = [self.app.data.project_data_path] + self.selected_unprocessed_file["path"] + [self.selected_unprocessed_file["filename"] + ".json"]
+        json_path = [self.app.data.project_data_path] + self.selected_unprocessed_file.path + [self.selected_unprocessed_file.filename + ".json"]
         json_path = os.path.join(*json_path)
         if os.path.exists(json_path):
             with open(json_path, "r") as f:
@@ -214,9 +218,9 @@ class ProjectScreen(BaseScreen):
         self.annotation_df = pd.read_csv(
             os.path.join(
                 self.app.data.project_data_path,
-                os.sep.join(self.selected_sample_annotation_file["path"]),
-                self.selected_sample_annotation_file["filename"]),
-            sep=detect_delimiter_from_extension(self.selected_sample_annotation_file["filename"])
+                os.sep.join(self.selected_sample_annotation_file.path),
+                self.selected_sample_annotation_file.filename),
+            sep=detect_delimiter_from_extension(self.selected_sample_annotation_file.filename)
         )
         markdown = self.query_one("#sample-annotation-file-markdown", Markdown)
         markdown_text = f"""# {event.option.prompt}
@@ -232,9 +236,9 @@ class ProjectScreen(BaseScreen):
         self.comparison_matrix_df = pd.read_csv(
             os.path.join(
                 self.app.data.project_data_path,
-                os.sep.join(self.selected_comparison_matrix_file["path"]),
-                self.selected_comparison_matrix_file["filename"]),
-            sep=detect_delimiter_from_extension(self.selected_comparison_matrix_file["filename"])
+                os.sep.join(self.selected_comparison_matrix_file.path),
+                self.selected_comparison_matrix_file.filename),
+            sep=detect_delimiter_from_extension(self.selected_comparison_matrix_file.filename)
         )
         markdown = self.query_one("#comparison-matrix-file-markdown", Markdown)
         markdown_text = f"""# {event.option.prompt}
@@ -276,13 +280,29 @@ class ProjectScreen(BaseScreen):
             self.app.db.update_project(project_id=self.app.data.project_id, name=self.app.data.project_name, description=self.app.data.description, location=self.app.data.project_path, hash=sha1)
 
         with open(os.path.join(self.app.data.project_path, "project.json"), "w") as f:
-            json.dump(dataclasses.asdict(self.app.data), f, indent=2)
-        with open(
-                os.path.join(self.app.data.project_data_path, "unprocessed", f"{self.selected_unprocessed_file}.json"),
-                "w") as f:
-            json.dump({"index_column": self.index_column, "meta_data_columns": self.meta_data_columns}, f)
+            json.dump(self.app.data.to_dict(), f, indent=2)
+        if self.selected_unprocessed_file:
+            with open(
+                    os.path.join(self.app.data.project_data_path, "unprocessed", f"{self.selected_unprocessed_file.filename}.json"),
+                    "w") as f:
+                json.dump({"index_column": self.index_column, "meta_data_columns": self.meta_data_columns}, f)
         self.notify("Saved project data")
 
+    async def action_save_to_server(self):
+        await self.action_save()
+        host = f"{self.app.config['central_rest_api']['protocol']}://{self.app.config['central_rest_api']['host']}:{self.app.config['central_rest_api']['port']}"
+        corpus = CorpusServer(host, self.app.config["central_rest_api"]["api_key"], self.app.db)
+        if self.app.data.remote_id:
+            await corpus.update_project(self.app.data)
+        else:
+            await corpus.create_project(self.app.data)
+        async for file in corpus.upload_file(self.app.data):
+            self.notify(f"Uploaded {file.filename}")
+        self.app.data.refresh()
+        await self.action_save()
+        await corpus.update_project(self.app.data)
+
+        self.notify("Saved project data to server")
 
 class CinderProject(App):
     SCREENS = {"project_screen": ProjectScreen()}
@@ -336,10 +356,13 @@ def manage_project(project_name: str):
             )
 
             with open(project_name + "/project.json", "w") as f:
-                json.dump(dataclasses.asdict(project), f, indent=2)
+                json.dump(project.to_dict(), f, indent=2)
         else:
             with open(os.path.join(project_folder, "project.json"), "r") as f:
                 project_dict = json.load(f)
+                for i in ["unprocessed", "differential_analysis", "sample_annotation", "other_files", "comparison_matrix"]:
+                    for i2, f in enumerate(project_dict[i]):
+                        project_dict[i][i2] = ProjectFile(**f)
                 project = Project(**project_dict)
     else:
         if os.path.exists("project.json"):
@@ -358,10 +381,11 @@ def manage_project(project_name: str):
     if os.path.exists(os.path.join(app_dir.user_config_dir, "data_manager_config.json")):
         with open(os.path.join(app_dir.user_config_dir, "data_manager_config.json"), "r") as f:
             app.config = json.load(f)
+
     else:
         app.config = {"central_rest_api": {
             "host": "localhost",
-            "port": 80,
+            "port": 8000,
             "protocol": "http"
         }}
         with open(os.path.join(app_dir.user_config_dir, "data_manager_config.json"), "w") as f:
