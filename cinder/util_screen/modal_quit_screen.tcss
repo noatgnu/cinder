@@ -9,7 +9,7 @@
     background: $surface;
 }
 
-ModelUpdateTextScreen {
+ModalQuitScreen {
     align: center middle;
 }
 

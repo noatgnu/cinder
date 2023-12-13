@@ -6,7 +6,7 @@ from cinder.cinderproject.project import ProjectManagerScreen, ProjectScreen
 from cinder.cindersettings.settings import SettingsScreen
 from cinder.main_screen.main_screen import MainScreen
 from cinder.upload_raw_file import UploadScreen, FolderWalk
-from cinder.util_screen.modal_quit import ModalUpdateTextScreen
+from cinder.util_screen.modal_quit import ModalQuitScreen
 
 
 class Cinder(App):
@@ -18,7 +18,7 @@ class Cinder(App):
         "project_manager_screen": ProjectManagerScreen(),
         "project_screen": ProjectScreen(),
         "settings_screen": SettingsScreen(),
-        "modal_quit": ModalUpdateTextScreen(),
+        "modal_quit": ModalQuitScreen(),
     }
 
     def on_mount(self) -> None:

@@ -11,7 +11,7 @@ from cinder.base_screen import BaseScreen
 from appdirs import AppDirs
 import sqlite3
 
-from cinder.project import ProjectDatabase
+from cinder.utils.common import ProjectDatabase
 
 
 class MainScreen(BaseScreen):

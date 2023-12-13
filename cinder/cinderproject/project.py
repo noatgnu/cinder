@@ -6,7 +6,7 @@ from io import BytesIO
 import click
 import httpx
 import pandas as pd
-from appdirs import AppDirs
+from cinder.utils.common import app_dir, load_settings, ProjectFile, Project, QueryResult, ProjectDatabase, CorpusServer
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -18,7 +18,6 @@ from textual.widgets.selection_list import Selection
 from textual.widgets.option_list import Option
 
 from cinder.base_screen import BaseScreen
-from cinder.project import Project, QueryResult, ProjectDatabase, CorpusServer, ProjectFile
 from cinder.utility import detect_delimiter_from_extension
 
 
@@ -374,22 +373,10 @@ def manage_project(project_name: str):
     project.refresh()
     app = CinderProject()
     app.data = project
-    print(app.data)
-    app_dir = AppDirs("Cinder", "Cinder")
+
     os.makedirs(app_dir.user_config_dir, exist_ok=True)
     app.config_dir = app_dir
-    if os.path.exists(os.path.join(app_dir.user_config_dir, "data_manager_config.json")):
-        with open(os.path.join(app_dir.user_config_dir, "data_manager_config.json"), "r") as f:
-            app.config = json.load(f)
-
-    else:
-        app.config = {"central_rest_api": {
-            "host": "localhost",
-            "port": 8000,
-            "protocol": "http"
-        }}
-        with open(os.path.join(app_dir.user_config_dir, "data_manager_config.json"), "w") as f:
-            json.dump(app.config, f)
+    app.config = load_settings()
 
     app.db = ProjectDatabase(os.path.join(app_dir.user_config_dir, "data_manager.db"))
     app.run()

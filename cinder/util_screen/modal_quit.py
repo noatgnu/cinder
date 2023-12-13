@@ -4,8 +4,8 @@ from textual.screen import Screen, ModalScreen
 from textual.widgets import Label, Button
 
 
-class ModalUpdateTextScreen(ModalScreen):
-    CSS_PATH = "modal_update_text_screen.tcss"
+class ModalQuitScreen(ModalScreen):
+    CSS_PATH = "modal_quit_screen.tcss"
 
     def compose(self) -> ComposeResult:
         yield Grid(
