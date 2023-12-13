@@ -1,10 +1,10 @@
 from textual.app import ComposeResult
 from textual.containers import Grid
-from textual.screen import Screen
+from textual.screen import Screen, ModalScreen
 from textual.widgets import Label, Button
 
 
-class ModalUpdateTextScreen(Screen):
+class ModalUpdateTextScreen(ModalScreen):
     CSS_PATH = "modal_update_text_screen.tcss"
 
     def compose(self) -> ComposeResult:

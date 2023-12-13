@@ -1,3 +1,6 @@
 MainScreen {
     align: center middle;
 }
+ModelUpdateTextScreen {
+    align: center middle;
+}
