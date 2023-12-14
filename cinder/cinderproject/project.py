@@ -6,16 +6,16 @@ from io import BytesIO
 import click
 import httpx
 import pandas as pd
-
+from textual_plotext import PlotextPlot
 from cinder.util_screen.modal_quit import ModalQuitScreen
 from cinder.utils.common import app_dir, load_settings, ProjectFile, Project, QueryResult, ProjectDatabase, CorpusServer
-from textual import on
+from textual import on, events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Grid, VerticalScroll, Vertical
 from textual.screen import Screen
 from textual.widgets import Label, Header, Input, Placeholder, Button, OptionList, Footer, Markdown, Static, Select, \
-    SelectionList
+    SelectionList, TabbedContent, TabPane, TextArea, Checkbox
 from textual.widgets.selection_list import Selection
 from textual.widgets.option_list import Option
 
@@ -23,7 +23,31 @@ from cinder.base_screen import BaseScreen
 from cinder.utility import detect_delimiter_from_extension
 
 
+class Barchart(PlotextPlot):
+    def __init__(
+            self,
+            title: str,
+            *,
+            name: str | None = None,
+            id: str | None = None,  # pylint:disable=redefined-builtin
+            classes: str | None = None,
+            disabled: bool = False,
+    ):
+        super().__init__(name=name, id=id, classes=classes, disabled=disabled)
+        self._title = title
 
+
+    def on_mount(self):
+        self.plt.xlabel("Sample")
+
+    def draw(self, x: list[str|int], y: list[float|int]):
+        self.plt.clear_data()
+        self.plt.bar(x, y, width=0.0005)
+        self.refresh()
+
+    def set_title(self, title: str):
+        self.plt.title(title)
+        self.refresh()
 
 class ProjectManagerScreen(BaseScreen):
     CSS_PATH = "project_manager_screen.tcss"
@@ -113,66 +137,195 @@ class ProjectScreen(BaseScreen):
 
         self.index_column: str | None = None
         self.meta_data_columns: list[str] = []
+        self.current_tab: str = "unprocessed"
+        self.selected_index_value_dict: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
         yield Header(True, name="Cinder")
         yield Horizontal(Label("Project name"), Input(value=self.app.data.project_name), classes="align-middle",
                          id="project-screen-title")
-        yield Grid(
-            Vertical(Horizontal(Label("Unprocessed Files"), classes="align-middle h-1"),
-                     VerticalScroll(
-                         OptionList(*[Option(i[1].filename, id=str(i[0])) for i in enumerate(self.app.data.project_files["unprocessed"]) if not i[1].filename.endswith(".json")],
-                                    id="unprocessed-file-selection"),
-                         id="unprocessed-file-scroll", classes="file-display-scroll-project ml-4"
-                     ),VerticalScroll(Markdown("# Select an unprocessed file", id="unprocessed-file-markdown"))
-                     ,
-                     ),
-            Vertical(Horizontal(Label("Searched Files"), classes="align-middle h-1"),
-                     VerticalScroll(
-                         OptionList(*[Option(i[1].filename, id=str(i[0])) for i in
-                                      enumerate(self.app.data.project_files["searched"]) if
-                                      not i[1].filename.endswith(".json")],
-                                    id="searched-file-selection"),
-                         id="searched-file-scroll", classes="file-display-scroll-project ml-4"
-                     ),VerticalScroll(Markdown("# Select a searched file", id="searched-file-markdown"),
-                     Select(options=[], id="searched-index-column-selection", prompt="Select index column", classes="ml-4"),
-                     SelectionList(*[], id="searched-additional-meta-index-columns", classes="ml-4"))
-                     ),
-            Vertical(Horizontal(Label("Differential Analysis Files"), classes="align-middle h-1"),
-                     VerticalScroll(
-                         OptionList(*[Option(i[1].filename, id=str(i[0])) for i in
-                                      enumerate(self.app.data.project_files["differential_analysis"]) if
-                                      not i[1].filename.endswith(".json")],
-                                    id="differential-analysis-file-selection"),
-                         id="differential-analysis-file-scroll", classes="file-display-scroll-project ml-4"
-                     ), VerticalScroll(Markdown("# Select a differential analysis file", id="differential-analysis-file-markdown"),
-                     Select(options=[], id="differential-analysis-index-column-selection", prompt="Select index column",
-                            classes="ml-4"),
-                     SelectionList(*[], id="differential-analysis-additional-meta-index-columns", classes="ml-4"))
 
-                     ),
-            Vertical(Horizontal(Label("Sample Annotation Files"), classes="align-middle h-1"),
-                     VerticalScroll(
-                         OptionList(*[Option(i[1].filename, id=str(i[0])) for i in enumerate(self.app.data.project_files["sample_annotation"]) if not i[1].filename.endswith(".json")],
-                                    id="sample-annotation-file-selection"),
-                         id="sample-annotation-file-scroll", classes="file-display-scroll-project ml-4"
-                     ), VerticalScroll(Markdown("# Select an annotation file", id="sample-annotation-file-markdown")), ),
-            Vertical(Horizontal(Label("Comparison Matrix Files"), classes="align-middle h-1"),
-                     VerticalScroll(
-                         OptionList(*[Option(i[1].filename, id=str(i[0])) for i in enumerate(self.app.data.project_files["comparison_matrix"]) if not i[1].filename.endswith(".json")],
-                                    id="comparison-matrix-file-selection"),
-                         id="comparison-matrix-file-scroll", classes="file-display-scroll-project ml-4"
-                     ), VerticalScroll(Markdown("# Select a comparison matrix file", id="comparison-matrix-file-markdown")), ),
+        with TabbedContent(*self.app.data.project_files.keys(), initial=self.current_tab, id="project-screen-tabs"):
+            for i in self.app.data.project_files.keys():
+                with TabPane(i, id=i):
+                    yield Grid(classes="tabbed-content-grid", id=f"{i}-grid")
 
 
-            id="project-screen-grid",
-        )
+        # yield Grid(
+        #     Vertical(Horizontal(Label("Unprocessed Files"), classes="align-middle h-1"),
+        #              VerticalScroll(
+        #                  OptionList(*[Option(i[1].filename, id=str(i[0])) for i in enumerate(self.app.data.project_files["unprocessed"]) if not i[1].filename.endswith(".json")],
+        #                             id="unprocessed-file-selection"),
+        #                  id="unprocessed-file-scroll", classes="file-display-scroll-project ml-4"
+        #              ),VerticalScroll(Markdown("# Select an unprocessed file", id="unprocessed-file-markdown"))
+        #              ,
+        #              ),
+        #     Vertical(Horizontal(Label("Searched Files"), classes="align-middle h-1"),
+        #              VerticalScroll(
+        #                  OptionList(*[Option(i[1].filename, id=str(i[0])) for i in
+        #                               enumerate(self.app.data.project_files["searched"]) if
+        #                               not i[1].filename.endswith(".json")],
+        #                             id="searched-file-selection"),
+        #                  id="searched-file-scroll", classes="file-display-scroll-project ml-4"
+        #              ),VerticalScroll(Markdown("# Select a searched file", id="searched-file-markdown"),
+        #              Select(options=[], id="searched-index-column-selection", prompt="Select index column", classes="ml-4"),
+        #              SelectionList(*[], id="searched-additional-meta-index-columns", classes="ml-4"))
+        #              ),
+        #     Vertical(Horizontal(Label("Differential Analysis Files"), classes="align-middle h-1"),
+        #              VerticalScroll(
+        #                  OptionList(*[Option(i[1].filename, id=str(i[0])) for i in
+        #                               enumerate(self.app.data.project_files["differential_analysis"]) if
+        #                               not i[1].filename.endswith(".json")],
+        #                             id="differential-analysis-file-selection"),
+        #                  id="differential-analysis-file-scroll", classes="file-display-scroll-project ml-4"
+        #              ), VerticalScroll(Markdown("# Select a differential analysis file", id="differential-analysis-file-markdown"),
+        #              Select(options=[], id="differential-analysis-index-column-selection", prompt="Select index column",
+        #                     classes="ml-4"),
+        #              SelectionList(*[], id="differential-analysis-additional-meta-index-columns", classes="ml-4"))
+        #
+        #              ),
+        #     Vertical(Horizontal(Label("Sample Annotation Files"), classes="align-middle h-1"),
+        #              VerticalScroll(
+        #                  OptionList(*[Option(i[1].filename, id=str(i[0])) for i in enumerate(self.app.data.project_files["sample_annotation"]) if not i[1].filename.endswith(".json")],
+        #                             id="sample-annotation-file-selection"),
+        #                  id="sample-annotation-file-scroll", classes="file-display-scroll-project ml-4"
+        #              ), VerticalScroll(Markdown("# Select an annotation file", id="sample-annotation-file-markdown")), ),
+        #     Vertical(Horizontal(Label("Comparison Matrix Files"), classes="align-middle h-1"),
+        #              VerticalScroll(
+        #                  OptionList(*[Option(i[1].filename, id=str(i[0])) for i in enumerate(self.app.data.project_files["comparison_matrix"]) if not i[1].filename.endswith(".json")],
+        #                             id="comparison-matrix-file-selection"),
+        #                  id="comparison-matrix-file-scroll", classes="file-display-scroll-project ml-4"
+        #              ), VerticalScroll(Markdown("# Select a comparison matrix file", id="comparison-matrix-file-markdown")), ),
+        #
+        #
+        #     id="project-screen-grid",
+        # )
         yield Footer()
 
     def on_mount(self) -> None:
         for i in self.app.config["project_folders"]:
             self.project_df_dict[i] = None
             self.project_selected_file_dict[i] = None
+        self.activate_tab()
+
+    def activate_tab(self):
+        grid = self.query_one(f"#{self.current_tab}-grid", Grid)
+        grid.remove_children()
+        grid.mount(*[VerticalScroll(OptionList(
+            *[Option(i2[1].filename, id=str(i2[0])) for i2 in enumerate(self.app.data.project_files[self.current_tab])
+              if
+              not i2[1].filename.endswith(".json")], id=f"{self.current_tab}-file-selection"), id=f"file-scroll",
+            classes="file-display-scroll-project ml-4 row-span-5"),
+            Vertical(
+                Label("Selected File: None", id=f"{self.current_tab}-selected-file-label"),
+                Horizontal(
+                    Button("Load", id=f"{self.current_tab}-load-file", variant="primary"),
+                    Checkbox("Enable remote save", id=f"{self.current_tab}-enable-save", value=True),
+                ),
+            ), VerticalScroll(
+                Label("Description"),
+                TextArea(id=f"{self.current_tab}-file-description"),
+                classes="border-white"
+            )])
+        if self.current_tab != "differential_analysis":
+
+            grid.mount(*[Vertical(
+                Label("Select index column"),
+                Select(options=[], id=f"{self.current_tab}-index-column-selection", prompt="Select index column",
+                       classes="ml-4"), ),
+                Vertical(
+                    Label("Select additional meta index columns"),
+                    VerticalScroll(
+                        SelectionList(*[], id=f"{self.current_tab}-additional-meta-index-columns", classes="ml-4"), )),
+                Vertical(
+                    Label("Select sample columns"),
+                    VerticalScroll(SelectionList(*[], id=f"{self.current_tab}-sample-columns", classes="ml-4"), )
+                ),
+                Horizontal(Select(options=[], id=f"{self.current_tab}-index-value-selection", prompt="Select index value",
+                           classes="ml-4"),Button("View Plot", id=f"{self.current_tab}-view-plot", variant="primary", classes="ml-4")),
+                Barchart("Bar Plot", id=f"{self.current_tab}-plot", classes="row-span-2 col-span-2")
+                #PlotextPlot(id=f"{self.current_tab}-plot", classes="row-span-2 col-span-2")
+            ])
+        else:
+            grid.mount(*[Vertical(
+                Label("Select index column"),
+                Select(options=[], id=f"{self.current_tab}-index-column-selection", prompt="Select index column",
+                       classes="ml-4"), ),
+                Vertical(
+                    Label("Select FoldChange Column"),
+                    Checkbox("Log2 Transform", id=f"{self.current_tab}-log2-fold-change", value=False),
+                    VerticalScroll(SelectionList(*[], id=f"{self.current_tab}-fold-change", classes="ml-4"), )
+                ),
+                Vertical(
+                    Label("Select p-value Column"),
+                    Checkbox("-Log10 Transform", id=f"{self.current_tab}-log10-p-value", value=False),
+                    VerticalScroll(SelectionList(*[], id=f"{self.current_tab}-p-value", classes="ml-4"), )),
+                Horizontal(
+                    Select(options=[], id=f"{self.current_tab}-index-value-selection", prompt="Select index value",
+                           classes="ml-4"),
+                    Button("View Plot", id=f"{self.current_tab}-view-plot", variant="primary", classes="ml-4"),
+                ),
+
+                PlotextPlot(id=f"{self.current_tab}-plot", classes="row-span-2 col-span-2")
+            ])
+
+    @on(TabbedContent.TabActivated, "#project-screen-tab")
+    async def tab_activated(self, event: TabbedContent.TabActivated):
+        self.current_tab = event.tab.id
+        self.activate_tab()
+
+    @on(OptionList.OptionSelected)
+    async def file_selected(self, event: OptionList.OptionSelected):
+        if event.option.id is not None:
+            current_file_label = self.query_one(f"#{self.current_tab}-selected-file-label", Label)
+            current_file_label.update(f"Selected File: {event.option.prompt}")
+            self.project_selected_file_dict[self.current_tab] = self.app.data.project_files[self.current_tab][int(event.option.id)]
+
+    @on(Button.Pressed)
+    async def button_action(self, event: Button.Pressed):
+        if event.button.id is not None:
+            if event.button.id.endswith("view-plot"):
+                plot = self.query_one(f"#{self.current_tab}-plot", Barchart)
+                if self.current_tab != "differential_analysis":
+                    df = self.project_df_dict[self.current_tab]
+                    index_column = self.query_one(f"#{self.current_tab}-index-column-selection", Select).value
+                    samples = self.query_one(f"#{self.current_tab}-sample-columns", SelectionList).selected
+                    index_value = self.selected_index_value_dict[self.current_tab]
+                    data = list(df[df[index_column] == index_value][samples].fillna(0).astype(float).values[0])
+                    plot.draw(samples, data)
+                    plot.set_title("Data distribution for " + index_value)
+            else:
+                delimiter = detect_delimiter_from_extension(self.project_selected_file_dict[self.current_tab].filename)
+                if delimiter:
+                    self.project_df_dict[self.current_tab] = pd.read_csv(
+                        os.path.join(
+                            self.app.data.project_data_path,
+                            *self.project_selected_file_dict[self.current_tab].path,
+                            self.project_selected_file_dict[self.current_tab].filename),
+                        sep=delimiter
+                    )
+                    index_selection = self.query_one(f"#{self.current_tab}-index-column-selection", Select)
+                    index_selection.set_options([(i, i) for i in self.project_df_dict[self.current_tab].columns])
+                    additional_meta_index_columns = self.query_one(f"#{self.current_tab}-additional-meta-index-columns", SelectionList)
+                    additional_meta_index_columns.clear_options()
+                    additional_meta_index_columns.add_options([Selection(i, i) for i in self.project_df_dict[self.current_tab].columns])
+                    if self.current_tab != "differential_analysis":
+                        sample_columns = self.query_one(f"#{self.current_tab}-sample-columns", SelectionList)
+                        sample_columns.clear_options()
+                        sample_columns.add_options([Selection(i, i) for i in self.project_df_dict[self.current_tab].columns])
+                    self.notify("Loaded " + self.project_selected_file_dict[self.current_tab].filename)
+                else:
+                    self.notify("File can only be in csv, tsv, or txt format")
+
+    @on(Select.Changed)
+    async def index_column_selected(self, event: Select.Changed):
+        if event.select.id is not None:
+            if event.select.id.endswith("index-column-selection"):
+                index_value_selection = self.query_one(f"#{self.current_tab}-index-value-selection", Select)
+                index_value_selection.set_options([(i, i) for i in self.project_df_dict[self.current_tab][event.select.value]])
+            else:
+                self.selected_index_value_dict[self.current_tab] = event.select.value
+
 
     @on(SelectionList.OptionSelected, "#additional-meta-index-columns")
     async def additional_meta_index_columns_selected(self, event):

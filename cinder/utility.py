@@ -28,11 +28,11 @@ def round_all_number_in_dataframe(df: pd.DataFrame):
 
 
 def detect_delimiter_from_extension(file_name: str):
-    if file_name.endswith(".tsv"):
+    if file_name.endswith(".tsv") or file_name.endswith(".txt"):
         return "\t"
     elif file_name.endswith(".csv"):
         return ","
     else:
-        return "\t"
+        return None
 
 

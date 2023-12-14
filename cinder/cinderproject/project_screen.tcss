@@ -27,11 +27,18 @@
 }
 
 .file-display-scroll-project {
-    height: 8;
+    height: 1fr;
+    width: 50;
     border: white;
     background: black;
 }
-
+.tabbed-content-grid {
+    layout: grid;
+    grid-size: 3 5;
+    grid-rows: 1fr;
+    grid-columns: 1fr;
+    grid-gutter: 1;
+}
 #project-screen-grid {
     grid-size: 5 1;
     grid-rows: 1fr;
@@ -61,4 +68,32 @@ Input {
 
 #index-column-selection {
 
+}
+
+.border-white {
+    border: heavy white;
+}
+
+.row-span-2 {
+    row-span: 2;
+}
+
+.row-span-3 {
+    row-span: 3;
+}
+
+.row-span-4 {
+    row-span: 4;
+}
+
+.row-span-5 {
+    row-span: 5;
+}
+
+.col-span-2 {
+    column-span: 2;
+}
+
+.col-span-3 {
+    column-span: 3;
 }
