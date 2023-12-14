@@ -6,6 +6,8 @@ from io import BytesIO
 import click
 import httpx
 import pandas as pd
+
+from cinder.util_screen.modal_quit import ModalQuitScreen
 from cinder.utils.common import app_dir, load_settings, ProjectFile, Project, QueryResult, ProjectDatabase, CorpusServer
 from textual import on
 from textual.app import App, ComposeResult
@@ -105,14 +107,10 @@ class ProjectScreen(BaseScreen):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.unprocessed_df: pd.DataFrame | None = None
-        self.annotation_df: pd.DataFrame | None = None
-        self.comparison_matrix_df: pd.DataFrame | None = None
-        self.selected_unprocessed_file: ProjectFile | None = None
-        self.selected_sample_annotation_file: ProjectFile | None = None
-        self.selected_comparison_matrix_file: ProjectFile | None = None
-        self.diff_analysis_df: pd.DataFrame | None = None
-        self.selected_diff_analysis_file: ProjectFile | None = None
+        self.project_df_dict: dict[str, pd.DataFrame|None] = {}
+
+        self.project_selected_file_dict: dict[str, ProjectFile|None] = {}
+
         self.index_column: str | None = None
         self.meta_data_columns: list[str] = []
 
@@ -123,73 +121,140 @@ class ProjectScreen(BaseScreen):
         yield Grid(
             Vertical(Horizontal(Label("Unprocessed Files"), classes="align-middle h-1"),
                      VerticalScroll(
-                         OptionList(*[Option(i[1].filename, id=str(i[0])) for i in enumerate(self.app.data.unprocessed) if not i[1].filename.endswith(".json")],
+                         OptionList(*[Option(i[1].filename, id=str(i[0])) for i in enumerate(self.app.data.project_files["unprocessed"]) if not i[1].filename.endswith(".json")],
                                     id="unprocessed-file-selection"),
                          id="unprocessed-file-scroll", classes="file-display-scroll-project ml-4"
+                     ),VerticalScroll(Markdown("# Select an unprocessed file", id="unprocessed-file-markdown"))
+                     ,
                      ),
-                     Markdown("# Select an unprocessed file", id="unprocessed-file-markdown"),
-                     Select(options=[], id="index-column-selection", prompt="Select index column", classes="ml-4"),
-                        SelectionList(*[], id="additional-meta-index-columns", classes="ml-4")
+            Vertical(Horizontal(Label("Searched Files"), classes="align-middle h-1"),
+                     VerticalScroll(
+                         OptionList(*[Option(i[1].filename, id=str(i[0])) for i in
+                                      enumerate(self.app.data.project_files["searched"]) if
+                                      not i[1].filename.endswith(".json")],
+                                    id="searched-file-selection"),
+                         id="searched-file-scroll", classes="file-display-scroll-project ml-4"
+                     ),VerticalScroll(Markdown("# Select a searched file", id="searched-file-markdown"),
+                     Select(options=[], id="searched-index-column-selection", prompt="Select index column", classes="ml-4"),
+                     SelectionList(*[], id="searched-additional-meta-index-columns", classes="ml-4"))
                      ),
-            Vertical(Horizontal(Label("Sample Annotation Files"), classes="align-middle h-1"),
-                     VerticalScroll(
-                         OptionList(*[Option(i[1].filename, id=str(i[0])) for i in enumerate(self.app.data.sample_annotation) if not i[1].filename.endswith(".json")],
-                                    id="sample-annotation-file-selection"),
-                         id="sample-annotation-file-scroll", classes="file-display-scroll-project ml-4"
-                     ), Markdown("# Select an annotation file", id="sample-annotation-file-markdown"), ),
-            Vertical(Horizontal(Label("Comparison Matrix Files"), classes="align-middle h-1"),
-                     VerticalScroll(
-                         OptionList(*[Option(i[1].filename, id=str(i[0])) for i in enumerate(self.app.data.comparison_matrix) if not i[1].filename.endswith(".json")],
-                                    id="comparison-matrix-file-selection"),
-                         id="comparison-matrix-file-scroll", classes="file-display-scroll-project ml-4"
-                     ), Markdown("# Select a comparison matrix file", id="comparison-matrix-file-markdown"), ),
             Vertical(Horizontal(Label("Differential Analysis Files"), classes="align-middle h-1"),
                      VerticalScroll(
                          OptionList(*[Option(i[1].filename, id=str(i[0])) for i in
-                                      enumerate(self.app.data.differential_analysis) if not i[1].filename.endswith(".json")],
+                                      enumerate(self.app.data.project_files["differential_analysis"]) if
+                                      not i[1].filename.endswith(".json")],
                                     id="differential-analysis-file-selection"),
                          id="differential-analysis-file-scroll", classes="file-display-scroll-project ml-4"
-                     ), Markdown("# Select a differential analysis file", id="differential-analysis-file-markdown"), ),
+                     ), VerticalScroll(Markdown("# Select a differential analysis file", id="differential-analysis-file-markdown"),
+                     Select(options=[], id="differential-analysis-index-column-selection", prompt="Select index column",
+                            classes="ml-4"),
+                     SelectionList(*[], id="differential-analysis-additional-meta-index-columns", classes="ml-4"))
+
+                     ),
+            Vertical(Horizontal(Label("Sample Annotation Files"), classes="align-middle h-1"),
+                     VerticalScroll(
+                         OptionList(*[Option(i[1].filename, id=str(i[0])) for i in enumerate(self.app.data.project_files["sample_annotation"]) if not i[1].filename.endswith(".json")],
+                                    id="sample-annotation-file-selection"),
+                         id="sample-annotation-file-scroll", classes="file-display-scroll-project ml-4"
+                     ), VerticalScroll(Markdown("# Select an annotation file", id="sample-annotation-file-markdown")), ),
+            Vertical(Horizontal(Label("Comparison Matrix Files"), classes="align-middle h-1"),
+                     VerticalScroll(
+                         OptionList(*[Option(i[1].filename, id=str(i[0])) for i in enumerate(self.app.data.project_files["comparison_matrix"]) if not i[1].filename.endswith(".json")],
+                                    id="comparison-matrix-file-selection"),
+                         id="comparison-matrix-file-scroll", classes="file-display-scroll-project ml-4"
+                     ), VerticalScroll(Markdown("# Select a comparison matrix file", id="comparison-matrix-file-markdown")), ),
+
 
             id="project-screen-grid",
         )
         yield Footer()
 
     def on_mount(self) -> None:
-        pass
+        for i in self.app.config["project_folders"]:
+            self.project_df_dict[i] = None
+            self.project_selected_file_dict[i] = None
 
     @on(SelectionList.OptionSelected, "#additional-meta-index-columns")
     async def additional_meta_index_columns_selected(self, event):
-        if self.unprocessed_df is not None:
+        if self.project_df_dict["unprocessed"] is not None:
             self.meta_data_columns = event
 
-    @on(Select.Changed, "#index-column-selection")
-    async def index_column_selected(self, event):
-        if self.unprocessed_df is not None:
+    @on(Select.Changed, "#searched-index-column-selection")
+    async def searched_index_column_selected(self, event):
+        if self.project_df_dict["searched"] is not None:
             self.notify(f"Selected {event.value} as index column")
-            markdown = self.query_one("#unprocessed-file-markdown", Markdown)
-            markdown_text = f"""# {self.selected_unprocessed_file.filename}
-                    - rows: {self.unprocessed_df.shape[0]}
-                    - columns: {self.unprocessed_df.shape[1]}
-                    - index column: {event.value}
+            markdown = self.query_one("#searched-file-markdown", Markdown)
+            markdown_text = f"""# {self.project_selected_file_dict["searched"].filename}
+- rows: {self.project_df_dict["searched"].shape[0]}
+- columns: {self.project_df_dict["searched"].shape[1]}
+- index column: {event.value}
                     """
             await markdown.update(markdown_text)
-    @on(OptionList.OptionSelected, "#unprocessed-file-selection")
-    async def unprocessed_file_selected(self, event: OptionList.OptionSelected):
-        self.selected_unprocessed_file = self.app.data.unprocessed[int(event.option.id)]
-        self.unprocessed_df = pd.read_csv(
+
+    @on(Select.Changed, "#differential-analysis-index-column-selection")
+    async def differential_analysis_index_column_selected(self, event):
+        if self.project_df_dict["differential_analysis"] is not None:
+            self.notify(f"Selected {event.value} as index column")
+            markdown = self.query_one("#differential-analysis-file-markdown", Markdown)
+            markdown_text = f"""# {self.project_selected_file_dict["differential_analysis"].filename}
+- rows: {self.project_df_dict["differential_analysis"].shape[0]}
+- columns: {self.project_df_dict["differential_analysis"].shape[1]}
+- index column: {event.value}
+                        """
+            await markdown.update(markdown_text)
+
+    @on(OptionList.OptionSelected, "#differential-analysis-file-selection")
+    async def differential_analysis_file_selected(self, event: OptionList.OptionSelected):
+        self.project_selected_file_dict["differential_analysis"] = self.app.data.project_files["differential_analysis"][int(event.option.id)]
+        self.project_df_dict["differential_analysis"] = pd.read_csv(
             os.path.join(
                 self.app.data.project_data_path,
-                *self.selected_unprocessed_file.path,
-                self.selected_unprocessed_file.filename),
-            sep=detect_delimiter_from_extension(self.selected_unprocessed_file.filename)
+                *self.project_selected_file_dict["differential_analysis"].path,
+                self.project_selected_file_dict["differential_analysis"].filename),
+            sep=detect_delimiter_from_extension(self.project_selected_file_dict["differential_analysis"].filename)
         )
-        index_selection = self.query_one("#index-column-selection", Select)
-        index_selection.set_options([(i, i) for i in self.unprocessed_df.columns])
-        additional_meta_index_columns = self.query_one("#additional-meta-index-columns", SelectionList)
+        index_selection = self.query_one("#differential-analysis-index-column-selection", Select)
+        index_selection.set_options([(i, i) for i in self.project_df_dict["differential_analysis"].columns])
+        additional_meta_index_columns = self.query_one("#searched-additional-meta-index-columns", SelectionList)
         additional_meta_index_columns.clear_options()
-        additional_meta_index_columns.add_options([Selection(i, i) for i in self.unprocessed_df.columns])
-        json_path = [self.app.data.project_data_path] + self.selected_unprocessed_file.path + [self.selected_unprocessed_file.filename + ".json"]
+        additional_meta_index_columns.add_options([Selection(i, i) for i in self.project_df_dict["differential_analysis"].columns])
+        json_path = [self.app.data.project_data_path] + list(self.project_selected_file_dict["differential_analysis"].path) + [
+            self.project_selected_file_dict["differential_analysis"].filename + ".json"]
+        json_path = os.path.join(*json_path)
+        if os.path.exists(json_path):
+            with open(json_path, "r") as f:
+                settings = json.load(f)
+                index_column = settings["index_column"]
+                index_selection.value = index_column
+                meta_data_columns = settings["meta_data_columns"]
+                for i in meta_data_columns:
+                    additional_meta_index_columns.select(i)
+
+        markdown = self.query_one("#differential-analysis-file-markdown", Markdown)
+        markdown_text = f"""# {event.option.prompt}
+- rows: {self.project_df_dict["searched"].shape[0]}
+- columns: {self.project_df_dict["searched"].shape[1]}
+            """
+        await markdown.update(markdown_text)
+        markdown.refresh()
+        self.notify(f"Selected {event.option.prompt}")
+
+    @on(OptionList.OptionSelected, "#searched-file-selection")
+    async def searched_file_selected(self, event: OptionList.OptionSelected):
+        self.project_selected_file_dict["searched"] = self.app.data.project_files["searched"][int(event.option.id)]
+        self.project_df_dict["searched"] = pd.read_csv(
+            os.path.join(
+                self.app.data.project_data_path,
+                *self.project_selected_file_dict["searched"].path,
+                self.project_selected_file_dict["searched"].filename),
+            sep=detect_delimiter_from_extension(self.project_selected_file_dict["searched"].filename)
+        )
+        index_selection = self.query_one("#searched-index-column-selection", Select)
+        index_selection.set_options([(i, i) for i in self.project_df_dict["searched"].columns])
+        additional_meta_index_columns = self.query_one("#searched-additional-meta-index-columns", SelectionList)
+        additional_meta_index_columns.clear_options()
+        additional_meta_index_columns.add_options([Selection(i, i) for i in self.project_df_dict["searched"].columns])
+        json_path = [self.app.data.project_data_path] + list(self.project_selected_file_dict["searched"].path) + [self.project_selected_file_dict["searched"].filename + ".json"]
         json_path = os.path.join(*json_path)
         if os.path.exists(json_path):
             with open(json_path, "r") as f:
@@ -201,11 +266,10 @@ class ProjectScreen(BaseScreen):
                     additional_meta_index_columns.select(i)
 
 
-        markdown = self.query_one("#unprocessed-file-markdown", Markdown)
+        markdown = self.query_one("#searched-file-markdown", Markdown)
         markdown_text = f"""# {event.option.prompt}
-        - rows: {self.unprocessed_df.shape[0]}
-        - columns: {self.unprocessed_df.shape[1]}
-        - index column: {index_selection.value}
+- rows: {self.project_df_dict["searched"].shape[0]}
+- columns: {self.project_df_dict["searched"].shape[1]}
         """
         await markdown.update(markdown_text)
         markdown.refresh()
@@ -213,35 +277,35 @@ class ProjectScreen(BaseScreen):
 
     @on(OptionList.OptionSelected, "#sample-annotation-file-selection")
     async def sample_annotation_file_selected(self, event):
-        self.selected_sample_annotation_file = self.app.data.sample_annotation[int(event.option.id)]
-        self.annotation_df = pd.read_csv(
+        self.project_selected_file_dict["sample_annotation"] = self.app.data.project_files["sample_annotation"][int(event.option.id)]
+        self.project_df_dict["sample_annotation"] = pd.read_csv(
             os.path.join(
                 self.app.data.project_data_path,
-                os.sep.join(self.selected_sample_annotation_file.path),
-                self.selected_sample_annotation_file.filename),
-            sep=detect_delimiter_from_extension(self.selected_sample_annotation_file.filename)
+                os.sep.join(self.project_selected_file_dict["sample_annotation"].path),
+                self.project_selected_file_dict["sample_annotation"].filename),
+            sep=detect_delimiter_from_extension(self.project_selected_file_dict["sample_annotation"].filename)
         )
         markdown = self.query_one("#sample-annotation-file-markdown", Markdown)
         markdown_text = f"""# {event.option.prompt}
-        - unique groups: {len(self.annotation_df["condition"].unique())}
-        - samples: {len(self.annotation_df["sample"].unique())}
+- unique groups: {len(self.project_df_dict["sample_annotation"]["condition"].unique())}
+- samples: {len(self.project_df_dict["sample_annotation"]["sample"].unique())}
         """
         await markdown.update(markdown_text)
         self.notify(f"Selected {event.option.prompt}")
 
     @on(OptionList.OptionSelected, "#comparison-matrix-file-selection")
     async def comparison_matrix_file_selected(self, event):
-        self.selected_comparison_matrix_file = self.app.data.comparison_matrix[int(event.option.id)]
-        self.comparison_matrix_df = pd.read_csv(
+        self.project_selected_file_dict["comparison_matrix"] = self.app.data.project_files["comparison_matrix"][int(event.option.id)]
+        self.project_df_dict["comparison_matrix"] = pd.read_csv(
             os.path.join(
                 self.app.data.project_data_path,
-                os.sep.join(self.selected_comparison_matrix_file.path),
-                self.selected_comparison_matrix_file.filename),
-            sep=detect_delimiter_from_extension(self.selected_comparison_matrix_file.filename)
+                os.sep.join(self.project_selected_file_dict["comparison_matrix"].path),
+                self.project_selected_file_dict["comparison_matrix"].filename),
+            sep=detect_delimiter_from_extension(self.project_selected_file_dict["comparison_matrix"].filename)
         )
         markdown = self.query_one("#comparison-matrix-file-markdown", Markdown)
         markdown_text = f"""# {event.option.prompt}
-        - comparisons: {len(self.comparison_matrix_df["comparison_label"].unique())}
+- comparisons: {len(self.project_df_dict["comparison_matrix"]["comparison_label"].unique())}
         """
         await markdown.update(markdown_text)
         self.notify(f"Selected {event.option.prompt}")
@@ -255,15 +319,21 @@ class ProjectScreen(BaseScreen):
         self.app.data.refresh()
         self.notify("Refreshed project data")
         # update the unprocessed file list widget, sample annotation file list widget, and comparison matrix file list widget
+        searched = self.query_one("#searched-file-selection", OptionList)
+        searched.clear_options()
+        searched.add_options([Option(i[1].filename, id=str(i[0])) for i in enumerate(self.app.data.project_files["searched"])])
         unprocessed = self.query_one("#unprocessed-file-selection", OptionList)
         unprocessed.clear_options()
-        unprocessed.add_options([Option(i, id=i) for i in self.app.data.unprocessed])
+        unprocessed.add_options([Option(i[1].filename, id=str(i[0])) for i in enumerate(self.app.data.project_files["unprocessed"])])
         sample_annotation = self.query_one("#sample-annotation-file-selection", OptionList)
         sample_annotation.clear_options()
-        sample_annotation.add_options([Option(i, id=i) for i in self.app.data.sample_annotation])
+        sample_annotation.add_options([Option(i[1].filename, id=str(i[0])) for i in enumerate(self.app.data.project_files["sample_annotation"])])
         comparison_matrix = self.query_one("#comparison-matrix-file-selection", OptionList)
         comparison_matrix.clear_options()
-        comparison_matrix.add_options([Option(i, id=i) for i in self.app.data.comparison_matrix])
+        comparison_matrix.add_options([Option(i[1].filename, id=str(i[0])) for i in enumerate(self.app.data.project_files["comparison_matrix"])])
+        differential_analysis = self.query_one("#differential-analysis-file-selection", OptionList)
+        differential_analysis.clear_options()
+        differential_analysis.add_options([Option(i[1].filename, id=str(i[0])) for i in enumerate(self.app.data.project_files["differential_analysis"])])
 
     async def action_save(self):
         # save the project data to the project.json file
@@ -280,9 +350,9 @@ class ProjectScreen(BaseScreen):
 
         with open(os.path.join(self.app.data.project_path, "project.json"), "w") as f:
             json.dump(self.app.data.to_dict(), f, indent=2)
-        if self.selected_unprocessed_file:
+        if self.project_selected_file_dict["unprocessed"] is not None:
             with open(
-                    os.path.join(self.app.data.project_data_path, "unprocessed", f"{self.selected_unprocessed_file.filename}.json"),
+                    os.path.join(self.app.data.project_data_path, "unprocessed", f"{self.project_selected_file_dict['unprocessed'].filename}.json"),
                     "w") as f:
                 json.dump({"index_column": self.index_column, "meta_data_columns": self.meta_data_columns}, f)
         self.notify("Saved project data")
@@ -304,13 +374,12 @@ class ProjectScreen(BaseScreen):
         self.notify("Saved project data to server")
 
 class CinderProject(App):
-    SCREENS = {"project_screen": ProjectScreen()}
+    SCREENS = {"project_screen": ProjectScreen(), "modal_quit": ModalQuitScreen(), "project_manager_screen": ProjectManagerScreen()}
     TITLE = "Cinder Project Manager"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.data = Project(project_name="", project_path="", project_data_path="", project_metadata={}, unprocessed=[],
-                            differential_analysis=[], sample_annotation=[], other_files=[], comparison_matrix=[], project_id=0, project_global_id="", description="")
+        self.data = Project(project_name="", project_path="", project_data_path="", project_files={}, project_metadata={}, project_id=0, project_global_id="", description="")
 
     def on_mount(self) -> None:
         self.push_screen("project_screen")
@@ -320,11 +389,10 @@ class CinderProject(App):
 @click.argument("project_name", type=click.Path(exists=False), default="")
 def manage_project(project_name: str):
     """Create a project folder and create configuration file from project dictionary"""
-
-
+    os.makedirs(app_dir.user_config_dir, exist_ok=True)
+    settings = load_settings()
     if not os.path.exists(project_name):
         os.mkdir(project_name)
-
 
     else:
         print("Project folder already exists")
@@ -334,22 +402,15 @@ def manage_project(project_name: str):
         if not os.path.exists(os.path.join(project_folder, "project.json")):
 
             os.makedirs(os.path.join(project_name, "data"), exist_ok=True)
-            os.makedirs(os.path.join(project_name, "data", "unprocessed"), exist_ok=True)
-            os.makedirs(os.path.join(project_name, "data", "differential_analysis"), exist_ok=True)
-            os.makedirs(os.path.join(project_name, "data", "sample_annotation"), exist_ok=True)
-            os.makedirs(os.path.join(project_name, "data", "other_files"), exist_ok=True)
-            os.makedirs(os.path.join(project_name, "data", "comparison_matrix"), exist_ok=True)
+            for i in settings["project_folders"]:
+                os.makedirs(os.path.join(project_name, "data", i), exist_ok=True)
             project = Project(
                 project_id=0,
                 project_name=project_name,
                 project_path=os.path.abspath(project_name),
                 project_data_path=os.path.abspath(os.path.join(project_name, "data")),
+                project_files={i: [] for i in settings["project_folders"]},
                 project_metadata={},
-                unprocessed=[],
-                differential_analysis=[],
-                sample_annotation=[],
-                other_files=[],
-                comparison_matrix=[],
                 project_global_id="",
                 description=""
             )
@@ -359,9 +420,9 @@ def manage_project(project_name: str):
         else:
             with open(os.path.join(project_folder, "project.json"), "r") as f:
                 project_dict = json.load(f)
-                for i in ["unprocessed", "differential_analysis", "sample_annotation", "other_files", "comparison_matrix"]:
-                    for i2, f in enumerate(project_dict[i]):
-                        project_dict[i][i2] = ProjectFile(**f)
+                for i in settings["project_folders"]:
+                    for i2, f in enumerate(project_dict["project_files"][i]):
+                        project_dict["project_files"][i][i2] = ProjectFile(**f)
                 project = Project(**project_dict)
     else:
         if os.path.exists("project.json"):
@@ -374,9 +435,9 @@ def manage_project(project_name: str):
     app = CinderProject()
     app.data = project
 
-    os.makedirs(app_dir.user_config_dir, exist_ok=True)
+
     app.config_dir = app_dir
-    app.config = load_settings()
+    app.config = settings
 
     app.db = ProjectDatabase(os.path.join(app_dir.user_config_dir, "data_manager.db"))
     app.run()

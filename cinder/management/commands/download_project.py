@@ -41,13 +41,9 @@ def main(project_id, hostname, port, protocol, api_key, output_path):
     os.makedirs(os.path.join(project.project_name, "data"), exist_ok=True)
 
     project.project_data_path = os.path.join(project.project_path, "data")
-    os.makedirs(os.path.join(project.project_name, "data", "unprocessed"), exist_ok=True)
-    os.makedirs(os.path.join(project.project_name, "data", "differential_analysis"), exist_ok=True)
-    os.makedirs(os.path.join(project.project_name, "data", "sample_annotation"), exist_ok=True)
-    os.makedirs(os.path.join(project.project_name, "data", "other_files"), exist_ok=True)
-    os.makedirs(os.path.join(project.project_name, "data", "comparison_matrix"), exist_ok=True)
-    for i in ["unprocessed", "differential_analysis", "sample_annotation", "other_files", "comparison_matrix"]:
-        file_list = getattr(project, i)
+    for i in project.project_files:
+        os.makedirs(os.path.join(project.project_name, "data", i), exist_ok=True)
+        file_list = project.project_files[i]
         for n, file in enumerate(file_list):
             file = ProjectFile(**file)
             asyncio.run(corpus.download_file(file, project))

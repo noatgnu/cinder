@@ -21,7 +21,9 @@ def load_settings():
             "host": "localhost",
             "port": 8000,
             "protocol": "http",
-            "api_key": ""}
+            "api_key": ""},
+        "project_folders": ["unprocessed", "searched", "differential_analysis", "sample_annotation", "other_files",
+                        "comparison_matrix"]
     }
     if os.path.exists(os.path.join(app_dir.user_config_dir, "data_manager_config.json")):
         with open(os.path.join(app_dir.user_config_dir, "data_manager_config.json"), "r") as f:
@@ -58,13 +60,10 @@ class Project:
     project_name: str
     project_path: str
     project_data_path: str
-    project_metadata: list[dict]
-    unprocessed: list[ProjectFile]
-    differential_analysis: list[ProjectFile]
-    sample_annotation: list[ProjectFile]
-    other_files: list[ProjectFile]
-    comparison_matrix: list[ProjectFile]
+    project_metadata: dict
+    project_files: dict[str, list[ProjectFile]]
     remote_id: int = None
+    project_hash: str = None
 
     def to_dict(self):
         d = dataclasses.asdict(self)
@@ -84,56 +83,49 @@ class Project:
         """Walk through the project data subfolders and update the file lists for unprocessed, differential analysis, sample annotation, other files, and comparison matrix"""
         sha1_list = []
         temp = {
-            "unprocessed": [],
-            "differential_analysis": [],
-            "sample_annotation": [],
-            "other_files": [],
-            "comparison_matrix": []
+            i: [] for i in self.project_files
         }
-
+        settings = load_settings()
         for root, dirs, files in os.walk(self.project_data_path):
             item_data_path = root.replace(self.project_data_path, "").lstrip(os.sep)
-            for cat in ["unprocessed", "differential_analysis", "sample_annotation", "other_files",
-                        "comparison_matrix"]:
+            for cat in temp:
                 if item_data_path.startswith(cat):
                     for file in files:
-                        if not file.endswith(".sha1"):
-                            data = ProjectFile(
-                                filename=file,
-                                path=tuple(item_data_path.split(os.sep)),
-                                sha1=self.calculate_sha1_hash_of_file(
-                                    os.path.join(self.project_data_path, root, file))
-                            )
-                            for j in getattr(self, cat):
-                                if data.sha1 == j.sha1 and data.filename == j.filename and data.path == j.path:
-                                    data.remote_id = j.remote_id
-                            sha1_list.append(data.sha1)
-                            temp[cat].append(data)
+                        data = ProjectFile(
+                            filename=file,
+                            path=tuple(item_data_path.split(os.sep)),
+                            sha1=self.calculate_sha1_hash_of_file(
+                                os.path.join(self.project_data_path, root, file))
+                        )
+                        for j in self.project_files[cat]:
+                            if data.sha1 == j.sha1 and data.filename == j.filename and data.path == j.path:
+                                data.remote_id = j.remote_id
+                        sha1_list.append(data.sha1)
+                        temp[cat].append(data)
+                        print(files)
+
         # check and remove from array if file is not in project folder
         removed_file = []
-        for cat in ["unprocessed", "differential_analysis", "sample_annotation", "other_files", "comparison_matrix"]:
-            for i in getattr(self, cat):
+        for cat in temp:
+            for i in self.project_files[cat]:
                 if i not in temp[cat]:
                     removed_file.append(i)
-            setattr(self, cat, temp[cat])
+            if cat not in self.project_files:
+                os.makedirs(os.path.join(self.project_data_path, cat), exist_ok=True)
+            self.project_files[cat] = temp[cat]
+        s1 = hashlib.sha1()
+        for s in sha1_list:
+            s1.update(s.encode('utf-8'))
+        self.project_hash = s1.hexdigest()
+        with open(os.path.join(self.project_path, "project.sha1"), "w") as f:
+            f.write(self.project_hash)
 
         with open(os.path.join(self.project_path, "project.json"), "w") as f:
             json.dump(self.to_dict(), f, indent=2)
 
-        sha1 = self.calculate_sha1_hash_of_file(os.path.join(self.project_path, "project.json"))
-        with open(os.path.join(self.project_path, "project.json.sha1"), "w") as f:
-            f.write(sha1)
-            sha1_list.append(sha1)
-
-        # combined all sha1 and digest into project wide hash
-        s1 = hashlib.sha1()
-        for s in sha1_list:
-            s1.update(s.encode('utf-8'))
-        sha1 = s1.hexdigest()
-        with open(os.path.join(self.project_path, "project.sha1"), "w") as f:
-            f.write(sha1)
-
+        self.project_json_hash = self.calculate_sha1_hash_of_file(os.path.join(self.project_path, "project.json"))
         return removed_file
+
 
     def get_project_hash(self):
         """Get project hash"""
@@ -262,6 +254,7 @@ class CorpusServer:
         self.api_key = api_key
         self.post_project_path = f"{host}/api/projects"
         self.db = local_db
+        self.settings = load_settings()
 
     async def create_project(self, project: Project):
         """Create project on server"""
@@ -338,8 +331,8 @@ class CorpusServer:
         result = await self.remove_remote_file_not_in_local_project(project)
         filename_map = {}
 
-        for cat in ["unprocessed", "differential_analysis", "sample_annotation", "other_files", "comparison_matrix"]:
-            for i, file in enumerate(getattr(project, cat)):
+        for cat in self.settings["project_folders"]:
+            for i, file in enumerate(project.project_files[cat]):
                 if not file.remote_id:
                     file = await self.upload_chunk(file, project, cat)
                     getattr(project, cat)[i].remote_id = file.remote_id
