@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from io import BytesIO
 
 import httpx
+import requests
 from appdirs import AppDirs
 from python_on_whales import docker
 
@@ -289,7 +290,20 @@ class CorpusServer:
         """Get project from server"""
         async with httpx.AsyncClient(headers={"X-API-Key": f"{self.api_key}"}) as client:
             d = await client.get(f"{self.post_project_path}/{project_id}")
-            project = Project(**d.json())
+            d = d.json()
+            print(d)
+            project = Project(
+                project_id=d["metadata"]["project_id"],
+                project_path=d["metadata"]["project_path"],
+                project_data_path=d["metadata"]["project_data_path"],
+                project_metadata={},
+                project_name=d["name"],
+                description=d["description"],
+                project_global_id=d["global_id"],
+                project_files=d["metadata"]["project_files"],
+                remote_id=d["id"],
+                project_hash=d["hash"]
+            )
             return project
 
     async def get_project_files(self, project_id: int):
@@ -318,7 +332,7 @@ class CorpusServer:
                 path = tuple(f["path"])
             cat = f["file_category"]
             p_f = ProjectFile(filename=f["filename"], sha1=f["hash"], remote_id=f["id"], path=path)
-            if p_f not in getattr(project, cat):
+            if p_f not in project.project_files[cat]:
                 await self.remove_file(p_f)
             else:
                 if cat not in result:
@@ -335,7 +349,7 @@ class CorpusServer:
             for i, file in enumerate(project.project_files[cat]):
                 if not file.remote_id:
                     file = await self.upload_chunk(file, project, cat)
-                    getattr(project, cat)[i].remote_id = file.remote_id
+                    project.project_files[cat][i].remote_id = file.remote_id
                     yield file
 
     async def upload_chunk(self, file: ProjectFile, project: Project, category: str, offset: int = 0):
@@ -378,17 +392,24 @@ class CorpusServer:
                             file.filename.endswith(".tsv") or file.filename.endswith(".txt") or file.filename.endswith(
                             ".csv")):
                         result = await client.post(f"{self.host}/api/files/chunked/{upload_id}/complete",
-                                                   json={"create_file": True, "load_file_content": True})
+                                                   json={"create_file": True, "load_file_content": True, "project_id": project.remote_id, "path": file.path})
                     else:
                         result = await client.post(f"{self.host}/api/files/chunked/{upload_id}/complete",
-                                                   json={"create_file": True})
+                                                   json={"create_file": True, "project_id": project.remote_id, "path": file.path})
                     file.remote_id = result.json()["id"]
             return file
 
     async def download_file(self, file: ProjectFile, project: Project):
         """Download file from server"""
-        async with httpx.stream('GET', f'{self.host}/api/files/{file.remote_id}/download',
-                                headers={"X-API-Key": f"{self.api_key}"}) as r:
-            with open(os.path.join(project.project_data_path, *file.path, file.filename), "wb") as f:
-                async for chunk in r.aiter_bytes():
-                    f.write(chunk)
+        async with httpx.AsyncClient(headers={"X-API-Key": f"{self.api_key}", "accept": "*/*"}, follow_redirects=True) as client:
+            async with client.stream('GET', f'{self.host}/api/files/{file.remote_id}/download') as r:
+                with open(os.path.join(project.project_data_path, *file.path, file.filename), "wb") as f:
+                    async for chunk in r.aiter_bytes():
+                        f.write(chunk)
+            #r = await client.get(f'{self.host}/api/files/{file.remote_id}/download')
+            #with open(os.path.join(project.project_data_path, *file.path, file.filename), "wb") as f:
+            #    f.write(r.content)
+            #r = requests.get(f'{self.host}/api/files/{file.remote_id}/download', headers={"X-API-Key": f"{self.api_key}"}, allow_redirects=True)
+            #with open(os.path.join(project.project_data_path, *file.path, file.filename), "wb") as f:
+            #    print(r.status_code)
+            #    f.write(r.content)

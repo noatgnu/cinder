@@ -25,4 +25,5 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry.scripts]
 cinder = "cinder.main:main"
 cinder-project = "cinder.cinderproject.project:manage_project"
+project-download = "cinder.management.commands.download_project:main"
 

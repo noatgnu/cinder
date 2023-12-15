@@ -39,10 +39,14 @@ class Barchart(PlotextPlot):
 
     def on_mount(self):
         self.plt.xlabel("Sample")
+        self.plt.theme('serious')
+        self.styles.background = "black"
+        self.styles.border = ("heavy", "white")
 
     def draw(self, x: list[str|int], y: list[float|int]):
         self.plt.clear_data()
-        self.plt.bar(x, y, width=0.0005)
+
+        self.plt.bar(x, y, width=0.001)
         self.refresh()
 
     def set_title(self, title: str):
@@ -209,69 +213,72 @@ class ProjectScreen(BaseScreen):
         self.activate_tab()
 
     def activate_tab(self):
+
         grid = self.query_one(f"#{self.current_tab}-grid", Grid)
-        grid.remove_children()
-        grid.mount(*[VerticalScroll(OptionList(
-            *[Option(i2[1].filename, id=str(i2[0])) for i2 in enumerate(self.app.data.project_files[self.current_tab])
-              if
-              not i2[1].filename.endswith(".json")], id=f"{self.current_tab}-file-selection"), id=f"file-scroll",
-            classes="file-display-scroll-project ml-4 row-span-5"),
-            Vertical(
-                Label("Selected File: None", id=f"{self.current_tab}-selected-file-label"),
-                Horizontal(
-                    Button("Load", id=f"{self.current_tab}-load-file", variant="primary"),
-                    Checkbox("Enable remote save", id=f"{self.current_tab}-enable-save", value=True),
-                ),
-            ), VerticalScroll(
-                Label("Description"),
-                TextArea(id=f"{self.current_tab}-file-description"),
-                classes="border-white"
-            )])
-        if self.current_tab != "differential_analysis":
+        # check if grid has children
+        if len(grid.children) == 0:
+            grid.mount(*[VerticalScroll(OptionList(
+                *[Option(i2[1].filename, id=str(i2[0])) for i2 in enumerate(self.app.data.project_files[self.current_tab])
+                  if
+                  not i2[1].filename.endswith(".json")], id=f"{self.current_tab}-file-selection"), id=f"file-scroll",
+                classes="file-display-scroll-project ml-4 row-span-3"),
+                Vertical(
+                    Label("Selected File: None", id=f"{self.current_tab}-selected-file-label"),
+                    Horizontal(
+                        Button("Load", id=f"{self.current_tab}-load-file", variant="primary"),
+                        Checkbox("Enable remote save", id=f"{self.current_tab}-enable-save", value=True),
+                    ),
+                ), VerticalScroll(
+                    Label("Description"),
+                    TextArea(id=f"{self.current_tab}-file-description"),
+                    classes="border-white"
+                )])
+            if self.current_tab != "differential_analysis":
 
-            grid.mount(*[Vertical(
-                Label("Select index column"),
-                Select(options=[], id=f"{self.current_tab}-index-column-selection", prompt="Select index column",
-                       classes="ml-4"), ),
-                Vertical(
-                    Label("Select additional meta index columns"),
-                    VerticalScroll(
-                        SelectionList(*[], id=f"{self.current_tab}-additional-meta-index-columns", classes="ml-4"), )),
-                Vertical(
-                    Label("Select sample columns"),
-                    VerticalScroll(SelectionList(*[], id=f"{self.current_tab}-sample-columns", classes="ml-4"), )
-                ),
-                Horizontal(Select(options=[], id=f"{self.current_tab}-index-value-selection", prompt="Select index value",
-                           classes="ml-4"),Button("View Plot", id=f"{self.current_tab}-view-plot", variant="primary", classes="ml-4")),
-                Barchart("Bar Plot", id=f"{self.current_tab}-plot", classes="row-span-2 col-span-2")
-                #PlotextPlot(id=f"{self.current_tab}-plot", classes="row-span-2 col-span-2")
-            ])
-        else:
-            grid.mount(*[Vertical(
-                Label("Select index column"),
-                Select(options=[], id=f"{self.current_tab}-index-column-selection", prompt="Select index column",
-                       classes="ml-4"), ),
-                Vertical(
-                    Label("Select FoldChange Column"),
-                    Checkbox("Log2 Transform", id=f"{self.current_tab}-log2-fold-change", value=False),
-                    VerticalScroll(SelectionList(*[], id=f"{self.current_tab}-fold-change", classes="ml-4"), )
-                ),
-                Vertical(
-                    Label("Select p-value Column"),
-                    Checkbox("-Log10 Transform", id=f"{self.current_tab}-log10-p-value", value=False),
-                    VerticalScroll(SelectionList(*[], id=f"{self.current_tab}-p-value", classes="ml-4"), )),
-                Horizontal(
-                    Select(options=[], id=f"{self.current_tab}-index-value-selection", prompt="Select index value",
-                           classes="ml-4"),
-                    Button("View Plot", id=f"{self.current_tab}-view-plot", variant="primary", classes="ml-4"),
-                ),
+                grid.mount(*[Vertical(
+                    Label("Select index column"),
+                    Select(options=[], id=f"{self.current_tab}-index-column-selection", prompt="Select index column",
+                           classes="ml-4"), ),
+                    Vertical(
+                        Label("Select additional meta index columns"),
+                        VerticalScroll(
+                            SelectionList(*[], id=f"{self.current_tab}-additional-meta-index-columns", classes="ml-4"), )),
+                    Vertical(
+                        Label("Select sample columns"),
+                        VerticalScroll(SelectionList(*[], id=f"{self.current_tab}-sample-columns", classes="ml-4"), )
+                    ),
+                    Horizontal(Select(options=[], id=f"{self.current_tab}-index-value-selection", prompt="Select index value",
+                               classes="ml-4"),Button("View Plot", id=f"{self.current_tab}-view-plot", variant="primary", classes="ml-4")),
+                    Barchart("Bar Plot", id=f"{self.current_tab}-plot", classes="row-span-2 col-span-3")
+                    #PlotextPlot(id=f"{self.current_tab}-plot", classes="row-span-2 col-span-2")
+                ])
+            else:
+                grid.mount(*[Vertical(
+                    Label("Select index column"),
+                    Select(options=[], id=f"{self.current_tab}-index-column-selection", prompt="Select index column",
+                           classes="ml-4"), ),
+                    Vertical(
+                        Label("Select FoldChange Column"),
+                        Checkbox("Log2 Transform", id=f"{self.current_tab}-log2-fold-change", value=False),
+                        VerticalScroll(SelectionList(*[], id=f"{self.current_tab}-fold-change", classes="ml-4"), )
+                    ),
+                    Vertical(
+                        Label("Select p-value Column"),
+                        Checkbox("-Log10 Transform", id=f"{self.current_tab}-log10-p-value", value=False),
+                        VerticalScroll(SelectionList(*[], id=f"{self.current_tab}-p-value", classes="ml-4"), )),
+                    Horizontal(
+                        Select(options=[], id=f"{self.current_tab}-index-value-selection", prompt="Select index value",
+                               classes="ml-4"),
+                        Button("View Plot", id=f"{self.current_tab}-view-plot", variant="primary", classes="ml-4"),
+                    ),
 
-                PlotextPlot(id=f"{self.current_tab}-plot", classes="row-span-2 col-span-2")
-            ])
+                    PlotextPlot(id=f"{self.current_tab}-plot", classes="row-span-2 col-span-3")
+                ])
 
-    @on(TabbedContent.TabActivated, "#project-screen-tab")
+    @on(TabbedContent.TabActivated, "#project-screen-tabs")
     async def tab_activated(self, event: TabbedContent.TabActivated):
         self.current_tab = event.tab.id
+        print(self.current_tab)
         self.activate_tab()
 
     @on(OptionList.OptionSelected)

@@ -97,3 +97,7 @@ Input {
 .col-span-3 {
     column-span: 3;
 }
+
+.bg-black {
+    background: black;
+}
